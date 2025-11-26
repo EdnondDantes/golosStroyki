@@ -1300,6 +1300,13 @@ bot.on('message', async (msg) => {
     // Удаляем сообщение пользователя
     try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
 
+    // Удаляем сообщение с просьбой написать жалобу
+    if (complaintStates[userId].messageId) {
+      try {
+        await bot.deleteMessage(chatId, complaintStates[userId].messageId);
+      } catch (e) {}
+    }
+
     if (!text || text.trim().length < 10) {
       const errorMsg = await bot.sendMessage(chatId, '❌ Жалоба слишком короткая. Опиши проблему подробнее (минимум 10 символов).');
       deleteMessageAfterDelay(chatId, errorMsg.message_id);
@@ -1321,8 +1328,30 @@ bot.on('message', async (msg) => {
     delete complaintStates[userId];
 
     if (result.success) {
-      const successMsg = await bot.sendMessage(chatId, '✅ Спасибо! Твоя жалоба принята и будет рассмотрена.', mainMenuKeyboard);
-      deleteMessageAfterDelay(chatId, successMsg.message_id);
+      // Форматируем текущую дату
+      const now = new Date();
+      const day = now.getDate();
+      const month = now.toLocaleString('ru-RU', { month: 'long' });
+      const year = now.getFullYear();
+      const dateStr = `${day} ${month} ${year}`;
+
+      await bot.sendMessage(chatId,
+`✅ *Жалоба принята*
+
+📝 Текст жалобы:
+_${text.trim()}_
+
+📅 Дата: ${dateStr}
+
+Наш менеджер свяжется с вами для решения этого вопроса.
+
+Спасибо за обратную связь!`,
+        {
+          parse_mode: 'Markdown',
+          ...mainMenuKeyboard
+        }
+      );
+      // НЕ удаляем это сообщение
       await showMainMenu(chatId, msg.from.first_name);
     } else {
       const failMsg = await bot.sendMessage(chatId, '❌ Произошла ошибка при отправке жалобы. Попробуй позже.', mainMenuKeyboard);
