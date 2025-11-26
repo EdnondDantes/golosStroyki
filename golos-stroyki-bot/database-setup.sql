@@ -56,10 +56,13 @@ CREATE TABLE IF NOT EXISTS complaints (
   contractor_id BIGINT REFERENCES contractors(id),
   message TEXT NOT NULL,
   status TEXT DEFAULT 'new' NOT NULL,
-  resolved_at TIMESTAMPTZ
+  resolved_at TIMESTAMPTZ,
+  telegram_tag TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_complaints_status ON complaints(status);
+
+COMMENT ON COLUMN complaints.telegram_tag IS 'Username в Telegram пользователя, отправившего жалобу (@username)';
 CREATE INDEX IF NOT EXISTS idx_complaints_contractor_id ON complaints(contractor_id);
 
 -- 6. Создание таблицы для отзывов (опционально, для будущего функционала)
@@ -110,6 +113,10 @@ COMMENT ON COLUMN contractors.citizenship IS 'Гражданство подря�
 COMMENT ON COLUMN contractors.photo_url IS 'URL фотографии профиля (опционально)';
 COMMENT ON COLUMN contractors.phone_number IS 'Номер телефона подрядчика';
 COMMENT ON COLUMN contractors.telegram_tag IS 'Username в Telegram (@username)';
+
+-- 10. Добавление поля telegram_tag в таблицу complaints (если таблица уже существует)
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS telegram_tag TEXT;
+COMMENT ON COLUMN complaints.telegram_tag IS 'Username в Telegram пользователя, отправившего жалобу (@username)';
 
 -- ============================================
 -- Полезные запросы для работы с данными

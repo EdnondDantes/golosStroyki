@@ -39,7 +39,49 @@ const userStates = {};
 // Хранилище состояний поиска
 const searchStates = {};
 
+// Хранилище состояний жалоб
+const complaintStates = {};
+
+// Хранилище ID сообщений для редактирования (живые сообщения)
+const liveMessages = {};
+
 // ==================== УТИЛИТЫ ====================
+
+// Функция для автоудаления служебных сообщений
+async function deleteMessageAfterDelay(chatId, messageId, delay = 7000) {
+  setTimeout(async () => {
+    try {
+      await bot.deleteMessage(chatId, messageId);
+    } catch (error) {
+      // Игнорируем ошибку если сообщение уже удалено
+      if (!error.message.includes('message to delete not found')) {
+        console.error('Ошибка удаления сообщения:', error.message);
+      }
+    }
+  }, delay);
+}
+
+// Функция для отправки сообщения шага анкеты с удалением предыдущего
+async function sendOrEditStepMessage(chatId, userId, text, keyboard) {
+  // Удаляем предыдущее сообщение шага если оно есть
+  if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
+    try {
+      await bot.deleteMessage(chatId, liveMessages[userId].formStepMessageId);
+    } catch (error) {
+      // Игнорируем ошибку если сообщение уже удалено
+    }
+  }
+
+  // Отправляем новое сообщение
+  const msg = await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    ...keyboard
+  });
+
+  // Сохраняем ID нового сообщения
+  if (!liveMessages[userId]) liveMessages[userId] = {};
+  liveMessages[userId].formStepMessageId = msg.message_id;
+}
 
 // Валидация данных
 function validateName(text) {
@@ -127,13 +169,17 @@ function validateContact(text) {
   if (text.length > 100) {
     return { valid: false, message: '❌ Номер телефона слишком длинный. Максимум 100 символов.' };
   }
-  // Проверка формата только телефона
-  const phonePattern = /^[\d\s\+\-\(\)]+$/;
-  const isPhone = phonePattern.test(text.trim());
 
-  if (!isPhone) {
-    return { valid: false, message: '❌ Укажите корректный номер телефона.' };
+  // Удаляем пробелы, скобки, дефисы для проверки
+  const cleanNumber = text.trim().replace(/[\s\-\(\)]/g, '');
+
+  // Проверка формата: должен начинаться с + или цифры, содержать только цифры после очистки
+  const phonePattern = /^\+?\d{10,15}$/;
+
+  if (!phonePattern.test(cleanNumber)) {
+    return { valid: false, message: '❌ Некорректный формат номера телефона. Используйте формат: +79123456789 или 89123456789' };
   }
+
   return { valid: true };
 }
 
@@ -403,6 +449,52 @@ async function saveContractorToDatabase(data) {
   }
 }
 
+// Сохранение жалобы в Supabase
+async function saveComplaintToDatabase(data) {
+  try {
+    // Проверка наличия URL и ключа
+    if (!SUPABASE_URL || SUPABASE_URL === 'your_supabase_url_here') {
+      console.error('❌ SUPABASE_URL не настроен в .env файле');
+      return { success: false, error: 'Supabase URL не настроен' };
+    }
+
+    if (!SUPABASE_KEY || SUPABASE_KEY === 'your_supabase_key_here') {
+      console.error('❌ SUPABASE_KEY не настроен в .env файле');
+      return { success: false, error: 'Supabase KEY не настроен' };
+    }
+
+    const { data: result, error } = await supabase
+      .from('complaints')
+      .insert([
+        {
+          telegram_id: data.userId,
+          contractor_id: data.contractorId || null,
+          message: data.message,
+          status: 'new',
+          created_at: new Date().toISOString(),
+          telegram_tag: data.telegramTag || null
+        }
+      ])
+      .select();
+
+    if (error) {
+      console.error('❌ Ошибка Supabase при сохранении жалобы:', error.message, error.details, error.hint);
+      throw error;
+    }
+
+    console.log('✅ Жалоба успешно сохранена в БД:', result);
+    return { success: true, data: result };
+  } catch (error) {
+    console.error('❌ Ошибка сохранения жалобы в БД:', {
+      message: error.message || 'Неизвестная ошибка',
+      details: error.details || '',
+      hint: error.hint || '',
+      code: error.code || ''
+    });
+    return { success: false, error };
+  }
+}
+
 // ==================== КЛАВИАТУРЫ ====================
 
 const communityKeyboard = {
@@ -510,8 +602,8 @@ async function showMainMenu(chatId, firstName) {
     }
   }, 8000);
 
-  // Затем отправляем сообщение с инлайн-кнопками
-  await bot.sendMessage(chatId, menuText, {
+  // Затем отправляем сообщение с инлайн-кнопками и сохраняем ID
+  const menuMessage = await bot.sendMessage(chatId, menuText, {
     reply_markup: {
       inline_keyboard: [
         [{ text: '🔍 Найти подрядчика', callback_data: 'search_contractor' }],
@@ -521,6 +613,9 @@ async function showMainMenu(chatId, firstName) {
       ]
     }
   });
+
+  // Сохраняем ID сообщения с меню для последующего удаления
+  liveMessages[chatId] = { menuMessageId: menuMessage.message_id };
 }
 
 // ==================== ОБРАБОТКА CALLBACK ====================
@@ -558,7 +653,8 @@ bot.on('callback_query', async (query) => {
   // Отмена анкеты
   if (data === 'cancel_form') {
     await bot.deleteMessage(chatId, query.message.message_id);
-    await bot.sendMessage(chatId, '❌ Заполнение анкеты отменено.', mainMenuKeyboard);
+    const cancelMsg = await bot.sendMessage(chatId, '❌ Заполнение анкеты отменено.', mainMenuKeyboard);
+    deleteMessageAfterDelay(chatId, cancelMsg.message_id);
     await bot.answerCallbackQuery(query.id);
     await showMainMenu(chatId, query.from.first_name);
     return;
@@ -566,6 +662,14 @@ bot.on('callback_query', async (query) => {
 
   // Обработка кнопок главного меню (inline)
   if (data === 'search_contractor') {
+    // Удаляем меню
+    if (liveMessages[chatId] && liveMessages[chatId].menuMessageId) {
+      try {
+        await bot.deleteMessage(chatId, liveMessages[chatId].menuMessageId);
+      } catch (error) {
+        console.log('Меню уже удалено');
+      }
+    }
     await bot.answerCallbackQuery(query.id);
     await startSearchProcess(chatId, userId);
     return;
@@ -596,6 +700,14 @@ bot.on('callback_query', async (query) => {
   }
 
   if (data === 'add_to_catalog') {
+    // Удаляем меню
+    if (liveMessages[chatId] && liveMessages[chatId].menuMessageId) {
+      try {
+        await bot.deleteMessage(chatId, liveMessages[chatId].menuMessageId);
+      } catch (error) {
+        console.log('Меню уже удалено');
+      }
+    }
     await bot.answerCallbackQuery(query.id);
     const confirmText = `🔧 *Отлично\\!*
 
@@ -612,8 +724,26 @@ bot.on('callback_query', async (query) => {
   }
 
   if (data === 'send_complaint') {
+    // Удаляем меню
+    if (liveMessages[chatId] && liveMessages[chatId].menuMessageId) {
+      try {
+        await bot.deleteMessage(chatId, liveMessages[chatId].menuMessageId);
+      } catch (error) {
+        console.log('Меню уже удалено');
+      }
+    }
     await bot.answerCallbackQuery(query.id);
-    await bot.sendMessage(chatId, '📝 Напиши свою жалобу, и мы её рассмотрим.', communityKeyboard);
+
+    // Инициализируем состояние жалобы
+    complaintStates[userId] = { active: true };
+
+    const complaintMsg = await bot.sendMessage(chatId, '📝 Напиши свою жалобу, и мы её рассмотрим.\n\n_Минимум 10 символов_', {
+      parse_mode: 'Markdown',
+      ...communityKeyboard
+    });
+
+    // Сохраняем ID сообщения для возможного удаления позже
+    complaintStates[userId].messageId = complaintMsg.message_id;
     return;
   }
 
@@ -961,10 +1091,23 @@ async function askStep1(chatId, userId) {
 
 _Можешь ответить текстом или голосовым сообщением 🎤_`;
 
-  await bot.sendMessage(chatId, text, {
+  // Удаляем предыдущее сообщение шага если оно есть
+  if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
+    try {
+      await bot.deleteMessage(chatId, liveMessages[userId].formStepMessageId);
+    } catch (error) {
+      // Игнорируем ошибку если сообщение уже удалено
+    }
+  }
+
+  const msg = await bot.sendMessage(chatId, text, {
     parse_mode: 'Markdown',
     ...cancelKeyboard
   });
+
+  // Сохраняем ID сообщения шага
+  if (!liveMessages[userId]) liveMessages[userId] = {};
+  liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
 // Шаг 2 - Город
@@ -974,14 +1117,9 @@ async function askStep2(chatId, userId) {
 
   const text = `${formData}📍 *Шаг 2 из 9* — Город
 
-В каком городе работаешь?
+В каком городе работаешь?`;
 
-_Можешь ответить текстом или голосовым сообщением 🎤_`;
-
-  await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
-    ...cancelWithBackKeyboard
-  });
+  await sendOrEditStepMessage(chatId, userId, text, cancelWithBackKeyboard);
 }
 
 // Шаг 3 - Специализация
@@ -993,14 +1131,9 @@ async function askStep3(chatId, userId) {
 
 Кратко напиши чем занимаешься, какие услуги оказываешь?
 
-_Например: "Отделка квартир, малярка, плитка, электрика"_
+_Например: "Отделка квартир, малярка, плитка, электрика"_`;
 
-_Можешь ответить текстом или голосовым сообщением 🎤_`;
-
-  await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
-    ...cancelWithBackKeyboard
-  });
+  await sendOrEditStepMessage(chatId, userId, text, cancelWithBackKeyboard);
 }
 
 // Шаг 4 - Опыт
@@ -1012,14 +1145,9 @@ async function askStep4(chatId, userId) {
 
 Сколько лет опыта?
 
-_Например: "5 лет" или "12 лет"_
+_Например: "5 лет" или "12 лет"_`;
 
-_Можешь ответить текстом или голосовым сообщением 🎤_`;
-
-  await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
-    ...cancelWithBackKeyboard
-  });
+  await sendOrEditStepMessage(chatId, userId, text, cancelWithBackKeyboard);
 }
 
 // Шаг 5 - Описание
@@ -1031,14 +1159,9 @@ async function askStep5(chatId, userId) {
 
 Кратко расскажи, почему клиент должен выбрать именно тебя?
 
-_Например: "Работаю по договору, даю гарантию 1 год, всегда на связи"_
+_Например: "Работаю по договору, даю гарантию 1 год, всегда на связи"_`;
 
-_Можешь ответить текстом или голосовым сообщением 🎤_`;
-
-  await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
-    ...cancelWithBackKeyboard
-  });
+  await sendOrEditStepMessage(chatId, userId, text, cancelWithBackKeyboard);
 }
 
 // Шаг 6 - Цены
@@ -1050,14 +1173,9 @@ async function askStep6(chatId, userId) {
 
 Напиши ориентировочную стоимость твоих услуг
 
-_Например: "от 2000 ₽/м²" или "от 1500 ₽/м² под ключ"_
+_Например: "от 2000 ₽/м²" или "от 1500 ₽/м² под ключ"_`;
 
-_Можешь ответить текстом или голосовым сообщением 🎤_`;
-
-  await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
-    ...cancelWithBackKeyboard
-  });
+  await sendOrEditStepMessage(chatId, userId, text, cancelWithBackKeyboard);
 }
 
 // Шаг 7 - Портфолио
@@ -1069,14 +1187,9 @@ async function askStep7(chatId, userId) {
 
 Отправь ссылку на ресурс, где можно посмотреть твои работы
 
-_Например: ссылка на Instagram, VK, сайт или Telegram-канал_
+_Например: ссылка на Instagram, VK, сайт или Telegram-канал_`;
 
-_Можешь ответить текстом или голосовым сообщением 🎤_`;
-
-  await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
-    ...cancelWithBackKeyboard
-  });
+  await sendOrEditStepMessage(chatId, userId, text, cancelWithBackKeyboard);
 }
 
 // Шаг 8 - Контакты
@@ -1088,10 +1201,9 @@ async function askStep8(chatId, userId) {
 
 Оставь номер телефона для клиентов:
 
-_Можешь ответить текстом, голосовым сообщением 🎤 или отправить свой контакт кнопкой ниже 👇_`;
+_Можешь отправить свой контакт кнопкой ниже 👇_`;
 
-  await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+  await sendOrEditStepMessage(chatId, userId, text, {
     reply_markup: {
       keyboard: [
         [{ text: '📱 Отправить мой контакт', request_contact: true }],
@@ -1113,14 +1225,9 @@ async function askStep9(chatId, userId) {
 
 Укажи своё гражданство:
 
-_Например: Россия, Казахстан, Беларусь_
+_Например: Россия, Казахстан, Беларусь_`;
 
-_Можешь ответить текстом или голосовым сообщением 🎤_`;
-
-  await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
-    ...cancelWithBackKeyboard
-  });
+  await sendOrEditStepMessage(chatId, userId, text, cancelWithBackKeyboard);
 }
 
 // Завершение анкеты
@@ -1188,6 +1295,42 @@ bot.on('message', async (msg) => {
   // Пропускаем команды
   if (text && text.startsWith('/')) return;
 
+  // Проверяем, отправляет ли пользователь жалобу
+  if (complaintStates[userId]) {
+    // Удаляем сообщение пользователя
+    try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
+
+    if (!text || text.trim().length < 10) {
+      const errorMsg = await bot.sendMessage(chatId, '❌ Жалоба слишком короткая. Опиши проблему подробнее (минимум 10 символов).');
+      deleteMessageAfterDelay(chatId, errorMsg.message_id);
+      return;
+    }
+
+    // Получаем telegram username
+    const telegramUsername = msg.from.username;
+
+    // Сохраняем жалобу в БД
+    const result = await saveComplaintToDatabase({
+      userId: userId,
+      contractorId: null,  // В будущем можно будет связывать с конкретным подрядчиком
+      message: text.trim(),
+      telegramTag: telegramUsername ? `@${telegramUsername}` : null
+    });
+
+    // Удаляем состояние жалобы
+    delete complaintStates[userId];
+
+    if (result.success) {
+      const successMsg = await bot.sendMessage(chatId, '✅ Спасибо! Твоя жалоба принята и будет рассмотрена.', mainMenuKeyboard);
+      deleteMessageAfterDelay(chatId, successMsg.message_id);
+      await showMainMenu(chatId, msg.from.first_name);
+    } else {
+      const failMsg = await bot.sendMessage(chatId, '❌ Произошла ошибка при отправке жалобы. Попробуй позже.', mainMenuKeyboard);
+      deleteMessageAfterDelay(chatId, failMsg.message_id);
+    }
+    return;
+  }
+
   // Проверяем, ищет ли пользователь подрядчика
   if (searchStates[userId]) {
     const state = searchStates[userId];
@@ -1232,14 +1375,20 @@ bot.on('message', async (msg) => {
 
     // Отмена заполнения
     if (text === '❌ Отменить заполнение') {
+      // Удаляем сообщение пользователя с кнопкой
+      try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
       delete userStates[userId];
-      await bot.sendMessage(chatId, '❌ Заполнение анкеты отменено.', mainMenuKeyboard);
+      const cancelMsg = await bot.sendMessage(chatId, '❌ Заполнение анкеты отменено.', mainMenuKeyboard);
+      deleteMessageAfterDelay(chatId, cancelMsg.message_id);
       await showMainMenu(chatId, msg.from.first_name);
       return;
     }
 
     // Обработка кнопки "Назад"
     if (text === '◀️ Назад') {
+      // Удаляем сообщение пользователя с кнопкой
+      try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
+
       if (state.step > 1) {
         state.step -= 1;
 
@@ -1282,8 +1431,14 @@ bot.on('message', async (msg) => {
     // Обработка контакта (шаг 8)
     if (msg.contact && state.step === 8) {
       const contact = msg.contact;
-      responseText = contact.phone_number ? `+${contact.phone_number}` : '@' + (msg.from.username || 'unknown');
-      await bot.sendMessage(chatId, `✅ Контакт получен: ${responseText}`);
+      // Убираем лишний плюс если он уже есть в номере
+      let phoneNumber = contact.phone_number;
+      if (phoneNumber && !phoneNumber.startsWith('+')) {
+        phoneNumber = '+' + phoneNumber;
+      }
+      responseText = phoneNumber || msg.from.username || 'unknown';
+      const sentMsg = await bot.sendMessage(chatId, `✅ Контакт получен: ${responseText}`);
+      deleteMessageAfterDelay(chatId, sentMsg.message_id);
     }
 
 
@@ -1338,9 +1493,14 @@ bot.on('message', async (msg) => {
       case 1:
         validation = validateName(responseText);
         if (!validation.valid) {
-          await bot.sendMessage(chatId, validation.message);
+          const errMsg = await bot.sendMessage(chatId, validation.message);
+          deleteMessageAfterDelay(chatId, errMsg.message_id);
+          // Удаляем сообщение пользователя
+          try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
           return;
         }
+        // Удаляем сообщение пользователя после успешной валидации
+        try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
         state.data.name = responseText.trim();
         state.step = 2;
         await askStep2(chatId, userId);
@@ -1349,9 +1509,12 @@ bot.on('message', async (msg) => {
       case 2:
         validation = validateCity(responseText);
         if (!validation.valid) {
-          await bot.sendMessage(chatId, validation.message);
+          const errMsg = await bot.sendMessage(chatId, validation.message);
+          deleteMessageAfterDelay(chatId, errMsg.message_id);
+          try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
           return;
         }
+        try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
         state.data.city = responseText.trim();
         state.step = 3;
         await askStep3(chatId, userId);
@@ -1360,7 +1523,9 @@ bot.on('message', async (msg) => {
       case 3:
         validation = validateSpecialization(responseText);
         if (!validation.valid) {
-          await bot.sendMessage(chatId, validation.message);
+          const errMsg = await bot.sendMessage(chatId, validation.message);
+          deleteMessageAfterDelay(chatId, errMsg.message_id);
+          try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
           return;
         }
 
@@ -1387,6 +1552,7 @@ bot.on('message', async (msg) => {
           }
         }
 
+        try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
         state.data.specialization = processedSpecialization;
         state.step = 4;
         await askStep4(chatId, userId);
@@ -1395,9 +1561,12 @@ bot.on('message', async (msg) => {
       case 4:
         validation = validateExperience(responseText);
         if (!validation.valid) {
-          await bot.sendMessage(chatId, validation.message);
+          const errMsg = await bot.sendMessage(chatId, validation.message);
+          deleteMessageAfterDelay(chatId, errMsg.message_id);
+          try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
           return;
         }
+        try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
         state.data.experience = responseText.trim();
         state.step = 5;
         await askStep5(chatId, userId);
@@ -1406,7 +1575,9 @@ bot.on('message', async (msg) => {
       case 5:
         validation = validateDescription(responseText);
         if (!validation.valid) {
-          await bot.sendMessage(chatId, validation.message);
+          const errMsg = await bot.sendMessage(chatId, validation.message);
+          deleteMessageAfterDelay(chatId, errMsg.message_id);
+          try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
           return;
         }
 
@@ -1433,6 +1604,7 @@ bot.on('message', async (msg) => {
           }
         }
 
+        try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
         state.data.description = processedDescription;
         state.step = 6;
         await askStep6(chatId, userId);
@@ -1441,9 +1613,12 @@ bot.on('message', async (msg) => {
       case 6:
         validation = validatePrice(responseText);
         if (!validation.valid) {
-          await bot.sendMessage(chatId, validation.message);
+          const errMsg = await bot.sendMessage(chatId, validation.message);
+          deleteMessageAfterDelay(chatId, errMsg.message_id);
+          try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
           return;
         }
+        try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
         state.data.price = responseText.trim();
         state.step = 7;
         await askStep7(chatId, userId);
@@ -1452,9 +1627,12 @@ bot.on('message', async (msg) => {
       case 7:
         validation = validatePortfolio(responseText);
         if (!validation.valid) {
-          await bot.sendMessage(chatId, validation.message);
+          const errMsg = await bot.sendMessage(chatId, validation.message);
+          deleteMessageAfterDelay(chatId, errMsg.message_id);
+          try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
           return;
         }
+        try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
         state.data.portfolioLink = responseText.trim();
         state.step = 8;
         await askStep8(chatId, userId);
@@ -1463,9 +1641,12 @@ bot.on('message', async (msg) => {
       case 8:
         validation = validateContact(responseText);
         if (!validation.valid) {
-          await bot.sendMessage(chatId, validation.message);
+          const errMsg = await bot.sendMessage(chatId, validation.message);
+          deleteMessageAfterDelay(chatId, errMsg.message_id);
+          try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
           return;
         }
+        try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
         state.data.contact = responseText.trim();
         state.step = 9;
         await askStep9(chatId, userId);
@@ -1474,9 +1655,12 @@ bot.on('message', async (msg) => {
       case 9:
         validation = validateCitizenship(responseText);
         if (!validation.valid) {
-          await bot.sendMessage(chatId, validation.message);
+          const errMsg = await bot.sendMessage(chatId, validation.message);
+          deleteMessageAfterDelay(chatId, errMsg.message_id);
+          try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
           return;
         }
+        try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
         state.data.citizenship = responseText.trim();
 
         // Получаем фото профиля пользователя из Telegram
@@ -1503,7 +1687,10 @@ bot.on('message', async (msg) => {
   
   // Обработка кнопки "Сообщество Голос Стройки"
   if (text === '💬 Сообщество Голос Стройки') {
-    await bot.sendMessage(
+    // Удаляем сообщение пользователя с кнопкой
+    try { await bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
+
+    const communityMsg = await bot.sendMessage(
       chatId,
       `📢 Присоединяйся к нашему сообществу: ${CHANNEL_ID}`,
       {
@@ -1514,6 +1701,9 @@ bot.on('message', async (msg) => {
         }
       }
     );
+
+    // Удаляем сообщение через 10 секунд
+    deleteMessageAfterDelay(chatId, communityMsg.message_id, 10000);
     return;
   }
 });
