@@ -1,0 +1,30 @@
+{
+  "name": "golos-stroyki-bot",
+  "version": "1.0.0",
+  "description": "Telegram бот каталога подрядчиков Голос Стройки",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "nodemon bot.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "contractors",
+    "строители"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": "16.x"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.61.0",
+    "@supabase/supabase-js": "^1.35.7",
+    "axios": "^0.27.2",
+    "dotenv": "^16.0.3"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.20"
+  }
+}
