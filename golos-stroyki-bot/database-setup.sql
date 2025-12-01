@@ -118,6 +118,89 @@ COMMENT ON COLUMN contractors.telegram_tag IS 'Username в Telegram (@username)'
 ALTER TABLE complaints ADD COLUMN IF NOT EXISTS telegram_tag TEXT;
 COMMENT ON COLUMN complaints.telegram_tag IS 'Username в Telegram пользователя, отправившего жалобу (@username)';
 
+-- 11. Обновление структуры полей согласно новому ТЗ
+-- Добавление новых полей
+ALTER TABLE contractors ADD COLUMN IF NOT EXISTS work_format TEXT;
+ALTER TABLE contractors ADD COLUMN IF NOT EXISTS objects_worked TEXT;
+ALTER TABLE contractors ADD COLUMN IF NOT EXISTS work_volume TEXT;
+ALTER TABLE contractors ADD COLUMN IF NOT EXISTS documents_form TEXT;
+ALTER TABLE contractors ADD COLUMN IF NOT EXISTS payment_conditions TEXT;
+
+COMMENT ON COLUMN contractors.work_format IS 'Формат работы (специалист, бригада, компания)';
+COMMENT ON COLUMN contractors.objects_worked IS 'На каких объектах работал';
+COMMENT ON COLUMN contractors.work_volume IS 'Объём работ, который может выполнить (включает размер команды)';
+COMMENT ON COLUMN contractors.documents_form IS 'Документы/форма работы (ИП, самозанятый, договор и т.д.)';
+COMMENT ON COLUMN contractors.payment_conditions IS 'Условия оплаты';
+
+-- Старые поля остаются для обратной совместимости:
+-- citizenship, team_size, description, price могут быть удалены позже или перепрофилированы
+
+-- ============================================
+-- 12. Создание таблицы orders (объекты/заказы)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS orders (
+  id SERIAL PRIMARY KEY,
+  telegram_id BIGINT NOT NULL,
+  username TEXT,
+  request_type TEXT,
+  city_location TEXT,
+  object_type TEXT,
+  work_type TEXT,
+  volume_timeline TEXT,
+  executor_requirements TEXT,
+  payment_conditions TEXT,
+  cooperation_format TEXT,
+  contact TEXT,
+  telegram_tag TEXT,
+  status TEXT DEFAULT 'pending',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+COMMENT ON TABLE orders IS 'Таблица объектов и заказов от заказчиков';
+COMMENT ON COLUMN orders.request_type IS 'Тип запроса (Бригада/подрядчик, Рабочие по сменам, Инженерный состав)';
+COMMENT ON COLUMN orders.city_location IS 'Город и локация объекта';
+COMMENT ON COLUMN orders.object_type IS 'Тип объекта (Квартира, Дом, ЖК, Коммерция и т.д.)';
+COMMENT ON COLUMN orders.work_type IS 'Какие работы нужны';
+COMMENT ON COLUMN orders.volume_timeline IS 'Объём и сроки';
+COMMENT ON COLUMN orders.executor_requirements IS 'Требования к исполнителю';
+COMMENT ON COLUMN orders.payment_conditions IS 'Условия оплаты';
+COMMENT ON COLUMN orders.cooperation_format IS 'Формат сотрудничества (Генподряд, Субподряд и т.д.)';
+COMMENT ON COLUMN orders.contact IS 'Контактный номер телефона';
+COMMENT ON COLUMN orders.telegram_tag IS 'Username в Telegram (@username)';
+COMMENT ON COLUMN orders.status IS 'Статус заказа (pending, approved, rejected)';
+
+-- ============================================
+-- 13. Создание таблицы suppliers (поставщики)
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS suppliers (
+  id SERIAL PRIMARY KEY,
+  telegram_id BIGINT NOT NULL,
+  username TEXT,
+  supplier_type TEXT,
+  products_services TEXT,
+  geography TEXT,
+  target_audience TEXT,
+  min_order_conditions TEXT,
+  contact TEXT,
+  company_info TEXT,
+  telegram_tag TEXT,
+  status TEXT DEFAULT 'pending',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+COMMENT ON TABLE suppliers IS 'Таблица поставщиков материалов и техники';
+COMMENT ON COLUMN suppliers.supplier_type IS 'Тип поставщика (Производитель, Поставщик, Аренда техники)';
+COMMENT ON COLUMN suppliers.products_services IS 'Что поставляет/сдаёт в аренду';
+COMMENT ON COLUMN suppliers.geography IS 'География работы';
+COMMENT ON COLUMN suppliers.target_audience IS 'С кем работает (Частники, Подрядчики, Застройщики)';
+COMMENT ON COLUMN suppliers.min_order_conditions IS 'Минимальный заказ и условия';
+COMMENT ON COLUMN suppliers.contact IS 'Контактный номер телефона';
+COMMENT ON COLUMN suppliers.company_info IS 'Название компании, имя контактного лица, ссылка на сайт';
+COMMENT ON COLUMN suppliers.telegram_tag IS 'Username в Telegram (@username)';
+COMMENT ON COLUMN suppliers.status IS 'Статус анкеты (pending, approved, rejected)';
+
 -- ============================================
 -- Полезные запросы для работы с данными
 -- ============================================
