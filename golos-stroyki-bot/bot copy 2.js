@@ -5,7 +5,6 @@ const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const { CATEGORIES } = require('./categories'); // Этап 5: AI-определение категории
 
 // ==================== КОНФИГУРАЦИЯ ====================
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -15,7 +14,6 @@ const YANDEX_API_KEY = process.env.YANDEX_API_KEY;
 const YANDEX_FOLDER_ID = process.env.YANDEX_FOLDER_ID;
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 const CHANNEL_ID = process.env.CHANNEL_ID; // например: @golos_stroyki
-const COMMUNITY_CHANNEL_NAME = process.env.COMMUNITY_CHANNEL_NAME || 'golos_stroyki'; // имя канала для ссылок на портфолио
 
 // Инициализация
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
@@ -359,29 +357,44 @@ function validateExecutorRequirements(text) {
 }
 
 // Валидация для полей suppliers (поставщики)
-function validateCompanyName(text) {
-  if (!text || text.trim().length < 2) {
-    return { valid: false, message: '❌ Имя или название компании слишком короткое (минимум 2 символа).' };
+function validateProductsServices(text) {
+  if (!text || text.trim().length < 10) {
+    return { valid: false, message: '❌ Опишите что вы поставляете/сдаёте в аренду (минимум 10 символов).' };
   }
-  if (text.length > 100) {
-    return { valid: false, message: '❌ Имя или название слишком длинное. Максимум 100 символов.' };
+  if (text.length > 400) {
+    return { valid: false, message: '❌ Описание слишком длинное. Максимум 400 символов.' };
   }
   return { valid: true };
 }
 
-// Вычисление даты истечения срока актуальности заявки
-function calculateExpirationDate(validityPeriod) {
-  if (!validityPeriod) return null;
+function validateGeography(text) {
+  if (!text || text.trim().length < 3) {
+    return { valid: false, message: '❌ Укажите географию работы.' };
+  }
+  if (text.length > 300) {
+    return { valid: false, message: '❌ Описание слишком длинное. Максимум 300 символов.' };
+  }
+  return { valid: true };
+}
 
-  // Извлекаем число дней из текста
-  const match = validityPeriod.match(/(\d+)/);
-  if (!match) return null;
+function validateMinOrderConditions(text) {
+  if (!text || text.trim().length < 5) {
+    return { valid: false, message: '❌ Укажите минимальный заказ и условия (минимум 5 символов).' };
+  }
+  if (text.length > 300) {
+    return { valid: false, message: '❌ Описание слишком длинное. Максимум 300 символов.' };
+  }
+  return { valid: true };
+}
 
-  const days = parseInt(match[1]);
-  const expirationDate = new Date();
-  expirationDate.setDate(expirationDate.getDate() + days);
-
-  return expirationDate.toISOString();
+function validateCompanyInfo(text) {
+  if (!text || text.trim().length < 3) {
+    return { valid: false, message: '❌ Укажите информацию о компании.' };
+  }
+  if (text.length > 400) {
+    return { valid: false, message: '❌ Описание слишком длинное. Максимум 400 символов.' };
+  }
+  return { valid: true };
 }
 
 // Проверка подписки на канал
@@ -522,104 +535,6 @@ async function processTextWithDeepseek(text, fieldType = 'general') {
   }
 }
 
-// Этап 5: AI-определение категории из списка 275 позиций
-async function determineCategoryWithAI(text, workFormat) {
-  try {
-    // Если API ключ не настроен, возвращаем null
-    if (!DEEPSEEK_API_KEY || DEEPSEEK_API_KEY === 'your_deepseek_api_key_here') {
-      console.log('⚠️ DEEPSEEK_API_KEY не настроен, пропускаем определение категории');
-      return null;
-    }
-
-    // Определяем список категорий в зависимости от формата работы
-    let categoryList = [];
-    if (workFormat === 'Специалист') {
-      categoryList = CATEGORIES.specialists;
-    } else if (workFormat === 'Бригада') {
-      categoryList = CATEGORIES.brigades;
-    } else if (workFormat === 'Компания') {
-      categoryList = CATEGORIES.companies;
-    } else if (workFormat === 'any') {
-      // Для заявок используем все категории
-      categoryList = [...CATEGORIES.specialists, ...CATEGORIES.brigades, ...CATEGORIES.companies];
-    } else {
-      console.log(`⚠️ Неизвестный формат работы: ${workFormat}`);
-      return null;
-    }
-
-    // Формируем промпт для AI
-    const systemPrompt = `Ты помощник для определения категории специалиста из строительной отрасли.
-
-Твоя задача:
-1. Прочитай описание специализации от пользователя
-2. Выбери ОДНУ наиболее подходящую категорию из списка ниже
-3. Верни ТОЛЬКО название категории, без пояснений и дополнительного текста
-
-Список категорий:
-${categoryList.join('\n')}
-
-ВАЖНО:
-- Выбирай ТОЛЬКО из списка выше
-- Если не можешь точно определить - верни слово "UNKNOWN"
-- НЕ придумывай новые категории`;
-
-    const userPrompt = `Описание специализации: "${text}"`;
-
-    // Отправляем запрос в Deepseek
-    const response = await axios.post(
-      'https://api.deepseek.com/v1/chat/completions',
-      {
-        model: 'deepseek-chat',
-        messages: [
-          {
-            role: 'system',
-            content: systemPrompt
-          },
-          {
-            role: 'user',
-            content: userPrompt
-          }
-        ],
-        temperature: 0.1, // Низкая температура для точности
-        max_tokens: 50
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${DEEPSEEK_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-
-    const aiResponse = response.data.choices[0].message.content.trim();
-
-    // Проверяем, что ответ содержит одну из категорий из списка
-    let category = null;
-    if (aiResponse && aiResponse !== 'UNKNOWN') {
-      // Ищем точное совпадение с одной из категорий
-      const foundCategory = categoryList.find(cat =>
-        aiResponse.includes(cat) || cat.includes(aiResponse)
-      );
-      if (foundCategory) {
-        category = foundCategory;
-      }
-    }
-
-    // Логирование для отладки
-    console.log(`🔍 Определение категории:`);
-    console.log(`   Текст: "${text}"`);
-    console.log(`   Формат: ${workFormat}`);
-    console.log(`   AI ответ: "${aiResponse}"`);
-    console.log(`   Результат: ${category || 'НЕ ОПРЕДЕЛЕНО'}`);
-
-    return category;
-
-  } catch (error) {
-    console.error('❌ Ошибка определения категории через Deepseek:', error.response?.data || error.message);
-    return null;
-  }
-}
-
 // Форматирование текста для Telegram (Markdown)
 function escapeMarkdown(text) {
   return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
@@ -669,134 +584,6 @@ function formatCurrentFormData(userData, currentStep) {
   return formText;
 }
 
-// Проверка роли пользователя (этап 2)
-async function checkUserRole(userId) {
-  try {
-    // Проверка наличия URL и ключа
-    if (!SUPABASE_URL || SUPABASE_URL === 'your_supabase_url_here') {
-      console.error('❌ SUPABASE_URL не настроен в .env файле');
-      return null;
-    }
-
-    if (!SUPABASE_KEY || SUPABASE_KEY === 'your_supabase_key_here') {
-      console.error('❌ SUPABASE_KEY не настроен в .env файле');
-      return null;
-    }
-
-    // Проверяем в таблице contractors
-    const { data: contractorData, error: contractorError } = await supabase
-      .from('contractors')
-      .select('role')
-      .eq('telegram_id', userId)
-      .not('role', 'is', null)
-      .limit(1)
-      .single();
-
-    if (contractorData && contractorData.role) {
-      console.log(`✅ Роль найдена в contractors: ${contractorData.role}`);
-      return contractorData.role;
-    }
-
-    // Проверяем в таблице orders
-    const { data: orderData, error: orderError } = await supabase
-      .from('orders')
-      .select('role')
-      .eq('telegram_id', userId)
-      .not('role', 'is', null)
-      .limit(1)
-      .single();
-
-    if (orderData && orderData.role) {
-      console.log(`✅ Роль найдена в orders: ${orderData.role}`);
-      return orderData.role;
-    }
-
-    // Проверяем в таблице suppliers
-    const { data: supplierData, error: supplierError } = await supabase
-      .from('suppliers')
-      .select('role')
-      .eq('telegram_id', userId)
-      .not('role', 'is', null)
-      .limit(1)
-      .single();
-
-    if (supplierData && supplierData.role) {
-      console.log(`✅ Роль найдена в suppliers: ${supplierData.role}`);
-      return supplierData.role;
-    }
-
-    // Роль не найдена
-    console.log(`ℹ️ Роль для пользователя ${userId} не найдена`);
-    return null;
-
-  } catch (error) {
-    console.error('❌ Ошибка проверки роли:', error.message);
-    return null;
-  }
-}
-
-// Сохранение источника трафика пользователя (этап 1)
-async function saveUserSource(userId, source = 'другое') {
-  try {
-    // Проверка наличия URL и ключа
-    if (!SUPABASE_URL || SUPABASE_URL === 'your_supabase_url_here') {
-      console.error('❌ SUPABASE_URL не настроен в .env файле');
-      return { success: false, error: 'Supabase URL не настроен' };
-    }
-
-    if (!SUPABASE_KEY || SUPABASE_KEY === 'your_supabase_key_here') {
-      console.error('❌ SUPABASE_KEY не настроен в .env файле');
-      return { success: false, error: 'Supabase KEY не настроен' };
-    }
-
-    // Проверяем, есть ли уже запись для этого пользователя
-    const { data: existing, error: checkError } = await supabase
-      .from('user_sources')
-      .select('*')
-      .eq('telegram_id', userId)
-      .single();
-
-    if (checkError && checkError.code !== 'PGRST116') { // PGRST116 = not found
-      console.error('❌ Ошибка проверки источника:', checkError);
-      return { success: false, error: checkError };
-    }
-
-    // Если пользователь уже есть в базе - не добавляем повторно
-    if (existing) {
-      console.log(`✅ Источник для пользователя ${userId} уже сохранен: ${existing.source}`);
-      return { success: true, data: existing, isNew: false };
-    }
-
-    // Сохраняем новую запись
-    const { data: result, error } = await supabase
-      .from('user_sources')
-      .insert([
-        {
-          telegram_id: userId,
-          source: source,
-          created_at: new Date().toISOString()
-        }
-      ])
-      .select();
-
-    if (error) {
-      console.error('❌ Ошибка Supabase при сохранении источника:', error.message, error.details, error.hint);
-      throw error;
-    }
-
-    console.log('✅ Источник трафика сохранен в БД:', result);
-    return { success: true, data: result, isNew: true };
-  } catch (error) {
-    console.error('❌ Ошибка сохранения источника в БД:', {
-      message: error.message || 'Неизвестная ошибка',
-      details: error.details || '',
-      hint: error.hint || '',
-      code: error.code || ''
-    });
-    return { success: false, error };
-  }
-}
-
 // Сохранение анкеты в Supabase
 async function saveContractorToDatabase(data) {
   try {
@@ -817,24 +604,18 @@ async function saveContractorToDatabase(data) {
         {
           telegram_id: data.userId,
           username: data.username,
-          name: data.name || 'Не указано', // этап 3: теперь берем из формы
-          description: data.specialization || 'Не указано',
-          price: 0,
           work_format: data.workFormat,
           city: data.city,
-          ready_for_trips: data.readyForTrips || false, // этап 3: готовность к командировкам
           specialization: data.specialization,
           experience: data.experience,
           objects_worked: data.objectsWorked,
-          professional_advantages: data.professionalAdvantages || null, // этап 3: преимущества
-          cooperation_format: data.cooperationFormat, // этап 3: переименовано из documents_form
+          work_volume: data.workVolume,
+          documents_form: data.documentsForm,
           payment_conditions: data.paymentConditions,
           contact: data.contact,
           photo_url: data.photoUrl,
           telegram_tag: data.telegramTag,
-          category: data.category || null, // этап 5: AI-определенная категория
-          role: data.role || null, // этап 2: сохраняем роль
-          status: 'approved', // одобрено
+          status: 'pending', // на модерации
           created_at: new Date().toISOString()
         }
       ])
@@ -918,9 +699,6 @@ async function saveOrderToDatabase(data) {
       return { success: false, error: 'Supabase KEY не настроен' };
     }
 
-    // Вычисляем дату истечения срока актуальности
-    const expiresAt = calculateExpirationDate(data.validityPeriod);
-
     const { data: result, error } = await supabase
       .from('orders')
       .insert([
@@ -931,15 +709,13 @@ async function saveOrderToDatabase(data) {
           city_location: data.cityLocation,
           object_type: data.objectType,
           work_type: data.workType,
+          volume_timeline: data.volumeTimeline,
           executor_requirements: data.executorRequirements,
-          validity_period: data.validityPeriod,
-          expires_at: expiresAt,
-          company_name: data.companyName,
+          payment_conditions: data.paymentConditions,
+          cooperation_format: data.cooperationFormat,
           contact: data.contact,
           telegram_tag: data.telegramTag,
-          category: data.category || null, // этап 5: AI-определенная категория
-          role: data.role || null, // этап 2: сохраняем роль
-          status: 'approved',
+          status: 'pending',
           created_at: new Date().toISOString()
         }
       ])
@@ -964,6 +740,57 @@ async function saveOrderToDatabase(data) {
 }
 
 // Сохранение поставщика (Supplier) в Supabase
+async function saveSupplierToDatabase(data) {
+  try {
+    // Проверка наличия URL и ключа
+    if (!SUPABASE_URL || SUPABASE_URL === 'your_supabase_url_here') {
+      console.error('❌ SUPABASE_URL не настроен в .env файле');
+      return { success: false, error: 'Supabase URL не настроен' };
+    }
+
+    if (!SUPABASE_KEY || SUPABASE_KEY === 'your_supabase_key_here') {
+      console.error('❌ SUPABASE_KEY не настроен в .env файле');
+      return { success: false, error: 'Supabase KEY не настроен' };
+    }
+
+    const { data: result, error } = await supabase
+      .from('suppliers')
+      .insert([
+        {
+          telegram_id: data.userId,
+          username: data.username,
+          supplier_type: data.supplierType,
+          products_services: data.productsServices,
+          geography: data.geography,
+          target_audience: data.targetAudience,
+          min_order_conditions: data.minOrderConditions,
+          contact: data.contact,
+          company_info: data.companyInfo,
+          telegram_tag: data.telegramTag,
+          status: 'pending',
+          created_at: new Date().toISOString()
+        }
+      ])
+      .select();
+
+    if (error) {
+      console.error('❌ Ошибка Supabase при сохранении поставщика:', error.message, error.details, error.hint);
+      throw error;
+    }
+
+    console.log('✅ Поставщик успешно сохранён в БД:', result);
+    return { success: true, data: result };
+  } catch (error) {
+    console.error('❌ Ошибка сохранения поставщика в БД:', {
+      message: error.message || 'Неизвестная ошибка',
+      details: error.details || '',
+      hint: error.hint || '',
+      code: error.code || ''
+    });
+    return { success: false, error };
+  }
+}
+
 // ==================== КЛАВИАТУРЫ ====================
 
 const communityKeyboard = {
@@ -1014,99 +841,54 @@ const cancelWithBackKeyboard = {
   }
 };
 
-// Клавиатура стартового экрана (этап 1)
-const welcomeScreenKeyboard = {
-  reply_markup: {
-    inline_keyboard: [
-      [{ text: '👥 В сообщество «Голос Стройки»', url: `https://t.me/${CHANNEL_ID.replace('@', '')}` }],
-      [{ text: '🗂 В Базу', callback_data: 'go_to_database' }]
-    ]
-  }
-};
-
-// Клавиатура выбора роли (этап 2)
-const roleSelectionKeyboard = {
-  reply_markup: {
-    inline_keyboard: [
-      [{ text: '👷 Рабочий', callback_data: 'role_worker' }],
-      [{ text: '👔 Бригадир', callback_data: 'role_foreman' }],
-      [{ text: '🏢 Подрядчик / Компания', callback_data: 'role_contractor' }],
-      [{ text: '💼 Заказчик', callback_data: 'role_customer' }],
-      [{ text: '🎓 Эксперт', callback_data: 'role_expert' }],
-      [{ text: '👁 Наблюдатель', callback_data: 'role_observer' }]
-    ]
-  }
-};
-
 // ==================== КОМАНДЫ ====================
-
-// Показать стартовый экран приветствия (этап 1)
-async function showWelcomeScreen(chatId, firstName) {
-  const name = firstName || 'друг';
-
-  const welcomeText = `👋 Привет, ${name}!
-
-Рад видеть тебя в базе сообщества «Голос Стройки».
-
-🔹 Сюда можешь добавить себя, если тебе нужна работа, объект или клиенты
-🔹 Здесь я помогу найти исполнителей на объект или материалы
-
-Что выбираешь?`;
-
-  await bot.sendMessage(chatId, welcomeText, {
-    parse_mode: 'Markdown',
-    ...welcomeScreenKeyboard
-  });
-}
-
-// Показать экран выбора роли (этап 2)
-async function showRoleSelection(chatId) {
-  const roleText = `👤 *Выбери свою роль*
-
-Это нужно для того, чтобы я понимал кто ты и мог подбирать для тебя релевантные предложения.
-
-Выбери роль, которая тебе больше всего подходит:`;
-
-  await bot.sendMessage(chatId, roleText, {
-    parse_mode: 'Markdown',
-    ...roleSelectionKeyboard
-  });
-}
 
 // Команда /start
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
   const username = msg.from.username || 'без username';
+  
+  console.log(`Пользователь ${username} (${userId}) запустил бота`);
+  
+  // Проверяем подписку
+  const isSubscribed = await checkSubscription(userId);
+  
+  if (!isSubscribed) {
+    const welcomeText = `👋 *Привет, ${escapeMarkdown(msg.from.first_name || 'друг')}\\!*
 
-  // Игнорируем команды из каналов и групп - работаем только в личных чатах
-  if (msg.chat.type !== 'private') {
+📋 Ты в *Каталоге подрядчиков* проекта *Голос Стройки*\\.
+
+Здесь ты можешь:
+🔹 найти надёжного подрядчика
+🔹 посмотреть реальные профили
+🔹 получить контакт
+🔹 или добавить себя в каталог \\(если ты мастер/компания\\)
+
+⚠️ *Перед использованием бота нужно быть подписанным на сообщество* ["Голос Стройки"](https://t.me/${CHANNEL_ID.replace('@', '')})`;
+
+    await bot.sendMessage(chatId, welcomeText, {
+      parse_mode: 'MarkdownV2',
+      ...checkSubscriptionKeyboard,
+      disable_web_page_preview: true
+    });
     return;
   }
-
-  console.log(`Пользователь ${username} (${userId}) запустил бота`);
-
-  // Сохраняем источник трафика при первом запуске (этап 1)
-  // В будущем можно добавить параметры к /start для отслеживания источника
-  // Например: /start?source=instagram
-  await saveUserSource(userId, 'другое');
-
-  // Показываем стартовый экран с выбором действия (этап 1)
-  await showWelcomeScreen(chatId, msg.from.first_name);
+  
+  // Если подписан - показываем главное меню
+  await showMainMenu(chatId);
 });
 
 // Показать главное меню
 async function showMainMenu(chatId) {
-  const menuText = `Здесь ты можешь:
+  const menuText = `Привет 👋
+Это бот базы сообщества «Голос Стройки».
+За 2–3 минуты добавим тебя в общую базу, чтобы:
+— быстрее находить работу и объекты;
+— находить подрядчиков и рабочих;
+— получать запросы из сообщества.
 
-🔨 *Найти работу*
-Заполни анкету исполнителя — заказчики найдут тебя сами.
-
-👷 *Найти людей*
-Найди специалистов через быстрый поиск
-или создай заявку — исполнители сами свяжутся с тобой.
-
-❓По вопросам и предложениям: @arrtproduction`;
+👤 Кого будем добавлять в базу?`;
 
   // Сначала устанавливаем обычную клавиатуру
   const tempMessage = await bot.sendMessage(chatId, '💬 Используй кнопку ниже для перехода в сообщество', communityKeyboard);
@@ -1118,14 +900,14 @@ async function showMainMenu(chatId) {
 
   // Затем отправляем сообщение с инлайн-кнопками и сохраняем ID
   const menuMessage = await bot.sendMessage(chatId, menuText, {
-    parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [
-        [{ text: '🔎 Ищу работу', callback_data: 'search_work' }],
-        [{ text: '👥 Ищу людей', callback_data: 'search_people' }],
-        [{ text: '📌 Моя анкета / заявка', callback_data: 'my_profile' }],
-        [{ text: '🧭 Инструкции к боту', callback_data: 'faq_help' }],
-        [{ text: '⭕️ Жалобы и предложения', callback_data: 'send_complaint' }]
+        // [{ text: '🔍 Найти подрядчика', callback_data: 'search_contractor' }],
+        [{ text: '🧱 Я специалист / бригада / компания', callback_data: 'add_contractor' }],
+        [{ text: '🏗 У меня объект / заказ', callback_data: 'add_order' }],
+        [{ text: '🚚 Я поставщик материалов / техники', callback_data: 'add_supplier' }],
+        [{ text: '⭕️ Отправить жалобу', callback_data: 'send_complaint' }],
+        [{ text: '❓ FAQ / Помощь', callback_data: 'faq_help' }]
       ]
     }
   });
@@ -1140,107 +922,21 @@ bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
   const userId = query.from.id;
   const data = query.data;
-
-  // Обработка кнопки "В Базу" со стартового экрана (этап 1)
-  if (data === 'go_to_database') {
-    await bot.answerCallbackQuery(query.id);
-
-    // Удаляем стартовое сообщение
-    await safeDeleteMessage(chatId, query.message.message_id);
-
-    // Проверяем подписку на канал
-    const isSubscribed = await checkSubscription(userId);
-
-    if (!isSubscribed) {
-      // Если не подписан - показываем сообщение с просьбой подписаться
-      const subscriptionText = `⚠️ *Для работы с базой нужно быть подписанным на сообщество*
-
-Подпишись на канал ["Голос Стройки"](https://t.me/${CHANNEL_ID.replace('@', '')}) и нажми кнопку ниже для проверки подписки.`;
-
-      await bot.sendMessage(chatId, subscriptionText, {
-        parse_mode: 'Markdown',
-        ...checkSubscriptionKeyboard,
-        disable_web_page_preview: true
-      });
-      return;
-    }
-
-    // Если подписан - проверяем роль (этап 2)
-    const userRole = await checkUserRole(userId);
-
-    if (!userRole) {
-      // Роль не найдена - показываем экран выбора роли
-      await showRoleSelection(chatId);
-      return;
-    }
-
-    // Роль найдена - переходим к главному меню
-    await showMainMenu(chatId);
-    return;
-  }
-
+  
   // Проверка подписки
   if (data === 'check_subscription') {
     const isSubscribed = await checkSubscription(userId);
 
     if (isSubscribed) {
       await safeDeleteMessage(chatId, query.message.message_id);
-      await bot.answerCallbackQuery(query.id, { text: '✅ Отлично! Подписка подтверждена' });
-
-      // Проверяем роль после подтверждения подписки (этап 2)
-      const userRole = await checkUserRole(userId);
-
-      if (!userRole) {
-        // Роль не найдена - показываем экран выбора роли
-        await showRoleSelection(chatId);
-        return;
-      }
-
-      // Роль найдена - переходим к главному меню
       await showMainMenu(chatId);
+      await bot.answerCallbackQuery(query.id, { text: '✅ Отлично! Подписка подтверждена' });
     } else {
       await bot.answerCallbackQuery(query.id, {
         text: '❌ Подписка не найдена. Пожалуйста, подпишись на канал.',
         show_alert: true
       });
     }
-    return;
-  }
-
-  // Обработка выбора роли (этап 2)
-  if (data.startsWith('role_')) {
-    await bot.answerCallbackQuery(query.id);
-
-    // Определяем выбранную роль
-    let selectedRole = '';
-    if (data === 'role_worker') selectedRole = 'рабочий';
-    else if (data === 'role_foreman') selectedRole = 'бригадир';
-    else if (data === 'role_contractor') selectedRole = 'подрядчик/компания';
-    else if (data === 'role_customer') selectedRole = 'заказчик';
-    else if (data === 'role_expert') selectedRole = 'эксперт';
-    else if (data === 'role_observer') selectedRole = 'наблюдатель';
-
-    // Сохраняем роль во временное хранилище userStates
-    if (!userStates[userId]) {
-      userStates[userId] = { data: {} };
-    }
-    userStates[userId].selectedRole = selectedRole;
-
-    console.log(`✅ Пользователь ${userId} выбрал роль: ${selectedRole}`);
-
-    // Удаляем сообщение с выбором роли
-    await safeDeleteMessage(chatId, query.message.message_id);
-
-    // Показываем подтверждение выбора роли
-    const confirmMsg = await bot.sendMessage(chatId, `✅ Роль выбрана: *${selectedRole}*\n\nРоль будет сохранена после создания первой анкеты или заявки.`, {
-      parse_mode: 'Markdown'
-    });
-
-    // Удаляем подтверждение через 5 секунд
-    deleteMessageAfterDelay(chatId, confirmMsg.message_id, 5000);
-
-    // Переходим к главному меню
-    await showMainMenu(chatId);
     return;
   }
 
@@ -1260,6 +956,14 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
+  // Начало заполнения формы поставщика
+  if (data === 'start_supplier_form') {
+    await safeDeleteMessage(chatId, query.message.message_id);
+    await startSupplierFormProcess(chatId, userId, query.from.username);
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
   // Отмена анкеты
   if (data === 'cancel_form') {
     if (userStates[userId]) {
@@ -1273,35 +977,29 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // Возврат в главное меню
-  if (data === 'main_menu') {
-    await safeDeleteMessage(chatId, query.message.message_id);
+  // Пропуск фото на шаге 10
+  if (data === 'skip_photo') {
     await bot.answerCallbackQuery(query.id);
-    await showMainMenu(chatId);
+
+    if (userStates[userId] && userStates[userId].step === 10) {
+      // Устанавливаем photoUrl в null
+      userStates[userId].data.photoUrl = null;
+
+      const skipMsg = await bot.sendMessage(chatId, '⏭ Шаг пропущен. Фото не добавлено.');
+      deleteMessageAfterDelay(chatId, skipMsg.message_id);
+
+      // Переходим к финальному шагу
+      userStates[userId].step = 11;
+      await askStep11(chatId, userId);
+    }
     return;
   }
 
-  // Пропуск фото на шаге 10
-  // Подтверждение анкеты на шаге 11 (Contractor) - больше нет отдельного шага финального согласования
+  // Подтверждение анкеты на шаге 11 (Contractor)
   if (data === 'confirm_form') {
     await bot.answerCallbackQuery(query.id);
 
     if (userStates[userId] && userStates[userId].formType === 'contractor' && userStates[userId].step === 11) {
-      // Редактируем сообщение: убираем кнопки и служебную часть, оставляя только данные анкеты
-      try {
-        const userData = userStates[userId].data;
-        const formData = formatCurrentFormData(userData, 11);
-
-        await bot.editMessageText(formData.trim(), {
-          chat_id: chatId,
-          message_id: query.message.message_id,
-          parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [] }
-        });
-      } catch (error) {
-        // Игнорируем ошибку если сообщение не удалось отредактировать
-      }
-
       // Завершаем анкету и отправляем в БД
       await finishForm(chatId, userId, query.from.username);
     }
@@ -1312,33 +1010,20 @@ bot.on('callback_query', async (query) => {
   if (data === 'confirm_order_form') {
     await bot.answerCallbackQuery(query.id);
 
-    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 9) {
-      // Редактируем сообщение: убираем кнопки и служебную часть, оставляя только данные заявки
-      try {
-        const userData = userStates[userId].data;
-        let formText = '📋 *Твоя заявка:*\n\n';
-
-        if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
-        if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
-        if (userData.objectType) formText += `3️⃣ Тип объекта: ${userData.objectType}\n`;
-        if (userData.workType) formText += `4️⃣ Задача: ${userData.workType}\n`;
-        if (userData.executorRequirements) formText += `5️⃣ Требования: ${userData.executorRequirements}\n`;
-        if (userData.validityPeriod) formText += `6️⃣ Срок актуальности: ${userData.validityPeriod}\n`;
-        if (userData.companyName) formText += `7️⃣ Компания: ${userData.companyName}\n`;
-        if (userData.contact) formText += `8️⃣ Контакт: ${userData.contact}\n`;
-
-        await bot.editMessageText(formText.trim(), {
-          chat_id: chatId,
-          message_id: query.message.message_id,
-          parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [] }
-        });
-      } catch (error) {
-        // Игнорируем ошибку если сообщение не удалось отредактировать
-      }
-
+    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 10) {
       // Завершаем заявку и отправляем в БД
       await finishOrderForm(chatId, userId);
+    }
+    return;
+  }
+
+  // Подтверждение анкеты на шаге 8 (Supplier)
+  if (data === 'confirm_supplier_form') {
+    await bot.answerCallbackQuery(query.id);
+
+    if (userStates[userId] && userStates[userId].formType === 'supplier' && userStates[userId].step === 8) {
+      // Завершаем анкету и отправляем в БД
+      await finishSupplierForm(chatId, userId);
     }
     return;
   }
@@ -1403,38 +1088,26 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // Обработка кнопок выбора города (шаг 3)
+  // Обработка кнопок выбора города (шаг 2)
   if (data.startsWith('city_')) {
     await bot.answerCallbackQuery(query.id);
-    if (userStates[userId] && userStates[userId].step === 3) {
+    if (userStates[userId] && userStates[userId].step === 2) {
       let city = '';
       if (data === 'city_moscow') city = 'Москва';
       else if (data === 'city_spb') city = 'Санкт-Петербург';
       else if (data === 'city_any') city = 'Готов работать в любом городе';
 
       userStates[userId].data.city = city;
-      userStates[userId].step = 4;
-      await askStep4(chatId, userId);
-    }
-    return;
-  }
-
-  // Обработка переключателя командировок (шаг 3)
-  if (data === 'toggle_trips') {
-    await bot.answerCallbackQuery(query.id);
-    if (userStates[userId] && userStates[userId].step === 3) {
-      // Переключаем состояние
-      userStates[userId].data.readyForTrips = !userStates[userId].data.readyForTrips;
-      // Перерисовываем шаг 3 с новым состоянием
+      userStates[userId].step = 3;
       await askStep3(chatId, userId);
     }
     return;
   }
 
-  // Обработка кнопок выбора опыта (шаг 5)
+  // Обработка кнопок выбора опыта (шаг 4)
   if (data.startsWith('exp_')) {
     await bot.answerCallbackQuery(query.id);
-    if (userStates[userId] && userStates[userId].step === 5) {
+    if (userStates[userId] && userStates[userId].step === 4) {
       let experience = '';
       if (data === 'exp_less1') experience = 'Менее 1 года';
       else if (data === 'exp_1_3') experience = '1-3 года';
@@ -1443,54 +1116,26 @@ bot.on('callback_query', async (query) => {
       else if (data === 'exp_more10') experience = 'Более 10 лет';
 
       userStates[userId].data.experience = experience;
-      userStates[userId].step = 6;
-      await askStep6(chatId, userId);
+      userStates[userId].step = 5;
+      await askStep5(chatId, userId);
     }
     return;
   }
 
-  // Обработка кнопки пропустить профессиональные преимущества (шаг 7)
-  if (data === 'skip_advantages') {
+  // Обработка кнопок выбора документов (шаг 7)
+  if (data.startsWith('doc_')) {
     await bot.answerCallbackQuery(query.id);
     if (userStates[userId] && userStates[userId].step === 7) {
-      userStates[userId].data.professionalAdvantages = null;
+      let documentsForm = '';
+      if (data === 'doc_ip') documentsForm = 'ИП';
+      else if (data === 'doc_samozanyaty') documentsForm = 'Самозанятый';
+      else if (data === 'doc_ooo') documentsForm = 'ООО';
+      else if (data === 'doc_contract') documentsForm = 'По договору';
+      else if (data === 'doc_none') documentsForm = 'Без оформления';
+
+      userStates[userId].data.documentsForm = documentsForm;
       userStates[userId].step = 8;
       await askStep8(chatId, userId);
-    }
-    return;
-  }
-
-  // Обработка кнопок формата сотрудничества (шаг 8, переименовано из doc_)
-  if (data.startsWith('coop_')) {
-    await bot.answerCallbackQuery(query.id);
-    if (userStates[userId] && userStates[userId].step === 8) {
-      let cooperationFormat = '';
-      if (data === 'coop_ip') cooperationFormat = 'ИП';
-      else if (data === 'coop_samozanyaty') cooperationFormat = 'Самозанятый';
-      else if (data === 'coop_ooo') cooperationFormat = 'ООО';
-      else if (data === 'coop_contract') cooperationFormat = 'По договору';
-      else if (data === 'coop_none') cooperationFormat = 'Без оформления';
-      else if (data === 'coop_any') cooperationFormat = 'Любой формат';
-
-      userStates[userId].data.cooperationFormat = cooperationFormat;
-      userStates[userId].step = 9;
-      await askStep9(chatId, userId);
-    }
-    return;
-  }
-
-  // Обработка кнопок условий оплаты (Contractor шаг 9)
-  if (data.startsWith('payment_')) {
-    await bot.answerCallbackQuery(query.id);
-    if (userStates[userId] && userStates[userId].formType === 'contractor' && userStates[userId].step === 9) {
-      let paymentConditions = '';
-      if (data === 'payment_cash') paymentConditions = 'Нал';
-      else if (data === 'payment_cashless') paymentConditions = 'Безнал';
-      else if (data === 'payment_negotiable') paymentConditions = 'Обсуждается';
-
-      userStates[userId].data.paymentConditions = paymentConditions;
-      userStates[userId].step = 10;
-      await askStep10(chatId, userId);
     }
     return;
   }
@@ -1551,50 +1196,25 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // Обработка кнопок требований к исполнителю (Order шаг 6 - опыт)
-  if (data.startsWith('ord_exp_')) {
+  // Обработка кнопок формата сотрудничества (Order Step 8)
+  if (data.startsWith('ord_coop_')) {
     await bot.answerCallbackQuery(query.id);
-    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 6) {
-      let experience = '';
-      if (data === 'ord_exp_less1') experience = 'Опыт: менее 1 года';
-      else if (data === 'ord_exp_1_3') experience = 'Опыт: 1-3 года';
-      else if (data === 'ord_exp_3_5') experience = 'Опыт: 3-5 лет';
-      else if (data === 'ord_exp_5_10') experience = 'Опыт: 5-10 лет';
-      else if (data === 'ord_exp_more10') experience = 'Опыт: более 10 лет';
+    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 8) {
+      let cooperationFormat = '';
+      if (data === 'ord_coop_general') cooperationFormat = 'Генподряд';
+      else if (data === 'ord_coop_sub') cooperationFormat = 'Субподряд';
+      else if (data === 'ord_coop_shifts') cooperationFormat = 'По сменам';
+      else if (data === 'ord_coop_onetime') cooperationFormat = 'Разовый проект';
+      else if (data === 'ord_coop_longterm') cooperationFormat = 'Долгосрочное сотрудничество';
 
-      userStates[userId].data.executorRequirements = experience;
-      userStates[userId].step = 7;
-      await askOrderStep7(chatId, userId);
+      userStates[userId].data.cooperationFormat = cooperationFormat;
+      userStates[userId].step = 9;
+
+      await askOrderStep9(chatId, userId);
     }
     return;
   }
 
-  // Обработка кнопки "Пропустить требования" (Order Step 5)
-  if (data === 'skip_order_requirements') {
-    await bot.answerCallbackQuery(query.id);
-    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 5) {
-      userStates[userId].data.executorRequirements = null;
-      userStates[userId].step = 6;
-      await askOrderStep6(chatId, userId);
-    }
-    return;
-  }
-
-  // Обработка кнопок срока актуальности (Order Step 6)
-  if (data.startsWith('ord_validity_')) {
-    await bot.answerCallbackQuery(query.id);
-    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 6) {
-      let validityPeriod = '';
-      if (data === 'ord_validity_7') validityPeriod = '7 дней';
-      else if (data === 'ord_validity_14') validityPeriod = '14 дней';
-      else if (data === 'ord_validity_30') validityPeriod = '30 дней';
-
-      userStates[userId].data.validityPeriod = validityPeriod;
-      userStates[userId].step = 7;
-      await askOrderStep7(chatId, userId);
-    }
-    return;
-  }
 
   // Обработка кнопки "Назад" для Order
   if (data === 'order_back') {
@@ -1614,6 +1234,83 @@ bot.on('callback_query', async (query) => {
         else if (step === 7) await askOrderStep7(chatId, userId);
         else if (step === 8) await askOrderStep8(chatId, userId);
         else if (step === 9) await askOrderStep9(chatId, userId);
+        else if (step === 10) await askOrderStep10(chatId, userId);
+      }
+    }
+    return;
+  }
+
+  // ========== CALLBACK HANDLERS ДЛЯ ВЕТКИ SUPPLIER ==========
+
+  // Обработка кнопок типа поставщика (Supplier Step 1)
+  if (data.startsWith('sup_type_')) {
+    await bot.answerCallbackQuery(query.id);
+    if (userStates[userId] && userStates[userId].formType === 'supplier' && userStates[userId].step === 1) {
+      let supplierType = '';
+      if (data === 'sup_type_manufacturer') supplierType = 'Производитель';
+      else if (data === 'sup_type_supplier') supplierType = 'Поставщик';
+      else if (data === 'sup_type_rent') supplierType = 'Аренда техники / механизмов';
+
+      userStates[userId].data.supplierType = supplierType;
+      userStates[userId].step = 2;
+
+      await askSupplierStep2(chatId, userId);
+    }
+    return;
+  }
+
+  // Обработка кнопок города (Supplier Step 3)
+  if (data.startsWith('sup_city_')) {
+    await bot.answerCallbackQuery(query.id);
+    if (userStates[userId] && userStates[userId].formType === 'supplier' && userStates[userId].step === 3) {
+      let city = '';
+      if (data === 'sup_city_moscow') city = 'Москва';
+      else if (data === 'sup_city_spb') city = 'Санкт-Петербург';
+
+      userStates[userId].data.geography = city;
+      userStates[userId].step = 4;
+
+      await askSupplierStep4(chatId, userId);
+    }
+    return;
+  }
+
+  // Обработка кнопок целевой аудитории (Supplier Step 4)
+  if (data.startsWith('sup_aud_')) {
+    await bot.answerCallbackQuery(query.id);
+    if (userStates[userId] && userStates[userId].formType === 'supplier' && userStates[userId].step === 4) {
+      let audience = '';
+      if (data === 'sup_aud_private') audience = 'Частники';
+      else if (data === 'sup_aud_contractors') audience = 'Подрядчики';
+      else if (data === 'sup_aud_developers') audience = 'Застройщики';
+      else if (data === 'sup_aud_all') audience = 'Не важно (все)';
+
+      userStates[userId].data.targetAudience = audience;
+      userStates[userId].step = 5;
+
+      await askSupplierStep5(chatId, userId);
+    }
+    return;
+  }
+
+
+  // Обработка кнопки "Назад" для Supplier
+  if (data === 'supplier_back') {
+    await bot.answerCallbackQuery(query.id);
+    if (userStates[userId] && userStates[userId].formType === 'supplier') {
+      const currentStep = userStates[userId].step;
+      if (currentStep > 1) {
+        userStates[userId].step = currentStep - 1;
+        const step = currentStep - 1;
+
+        if (step === 1) await askSupplierStep1(chatId, userId);
+        else if (step === 2) await askSupplierStep2(chatId, userId);
+        else if (step === 3) await askSupplierStep3(chatId, userId);
+        else if (step === 4) await askSupplierStep4(chatId, userId);
+        else if (step === 5) await askSupplierStep5(chatId, userId);
+        else if (step === 6) await askSupplierStep6(chatId, userId);
+        else if (step === 7) await askSupplierStep7(chatId, userId);
+        else if (step === 8) await askSupplierStep8(chatId, userId);
       }
     }
     return;
@@ -1658,8 +1355,8 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // Ищу работу - выбор между быстрым поиском и созданием анкеты
-  if (data === 'search_work') {
+  // Добавить себя как специалист/бригада/компания
+  if (data === 'add_contractor') {
     // Удаляем меню
     if (liveMessages[chatId] && liveMessages[chatId].menuMessageId) {
       try {
@@ -1669,177 +1366,22 @@ bot.on('callback_query', async (query) => {
       }
     }
     await bot.answerCallbackQuery(query.id);
+    const confirmText = `🔧 *Отлично\\!*
 
-    const menuText = `Как ты хочешь искать работу?
-
-⚡️ Быстрый поиск — я покажу актуальные предложения по твоей анкете.
-
-📝 Создать анкету — ты заполняешь профиль, и заказчики находят тебя сами в сообществе.
-
-ℹ️ Сейчас ты можешь создать до 2 анкет специалиста.`;
-
-    await bot.sendMessage(chatId, menuText, {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '⚡️ Быстрый поиск работы', callback_data: 'quick_search_work' }],
-          [{ text: '📝 Создать анкету', callback_data: 'create_contractor_profile' }],
-          [{ text: '🏠 В меню', callback_data: 'main_menu' }]
-        ]
-      }
-    });
-    return;
-  }
-
-  // Создать анкету подрядчика
-  if (data === 'create_contractor_profile') {
-    await bot.answerCallbackQuery(query.id);
-    await safeDeleteMessage(chatId, query.message.message_id);
-
-    // Проверяем количество существующих анкет пользователя
-    const { data: existingProfiles, error: checkError } = await supabase
-      .from('contractors')
-      .select('id')
-      .eq('telegram_id', userId);
-
-    if (checkError) {
-      console.error('Ошибка проверки количества анкет:', checkError);
-    }
-
-    // Если уже есть 2 или больше анкет - показываем ошибку
-    if (existingProfiles && existingProfiles.length >= 2) {
-      await bot.sendMessage(chatId, `❌ У тебя уже есть максимальное количество анкет (2).
-
-Чтобы создать новую, нужно сначала удалить одну из существующих.`, {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📌 Моя анкета', callback_data: 'my_profile' }],
-            [{ text: '🏠 В меню', callback_data: 'main_menu' }]
-          ]
-        }
-      });
-      return;
-    }
-
-    const confirmText = `🔧 Отлично!
-
-Сейчас мы создадим твою карточку подрядчика.
-Процесс займёт 1–2 минуты.
+Сейчас мы создадим твою карточку подрядчика\\.
+Процесс займёт 1–2 минуты\\.
 
 Начнём?`;
 
     await bot.sendMessage(chatId, confirmText, {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '✅ Да, начать', callback_data: 'start_form' }],
-          [{ text: '❌ Отмена', callback_data: 'cancel_form' }]
-        ]
-      }
+      parse_mode: 'MarkdownV2',
+      ...confirmStartFormKeyboard
     });
     return;
   }
 
-  // Быстрый поиск работы (для специалистов)
-  if (data === 'quick_search_work') {
-    await bot.answerCallbackQuery(query.id);
-    await safeDeleteMessage(chatId, query.message.message_id);
-
-    // Проверяем наличие анкеты специалиста
-    const { data: contractorData, error: contractorError } = await supabase
-      .from('contractors')
-      .select('*')
-      .eq('telegram_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    if (contractorError || !contractorData) {
-      // Анкеты нет - показываем сообщение
-      const noProfileText = `Чтобы я мог показывать тебе подходящие предложения,
-мне нужно знать твою специализацию и город.
-
-Заполни анкету —
-она публикуется в сообществе и помогает заказчикам находить тебя.`;
-
-      await bot.sendMessage(chatId, noProfileText, {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📝 Создать анкету', callback_data: 'create_contractor_profile' }],
-            [{ text: '🏠 В меню', callback_data: 'main_menu' }]
-          ]
-        }
-      });
-      return;
-    }
-
-    // Анкета есть - показываем форму поиска
-    const searchText = `Опиши, какую работу ты ищешь.
-
-Можно:
-— написать текстом
-— или отправить голосовое сообщение
-
-Я подберу подходящие заявки из Базы по твоему запросу.
-
-Пример:
-«Ищу работу по укладке плитки в Москве»`;
-
-    const searchPromptMsg = await bot.sendMessage(chatId, searchText, {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '◀️ Назад', callback_data: 'search_work' }],
-          [{ text: '🏠 В меню', callback_data: 'main_menu' }]
-        ]
-      }
-    });
-
-    // Инициализируем состояние поиска и сохраняем ID сообщения для удаления
-    searchStates[userId] = {
-      type: 'search_orders',
-      step: 'waiting_query',
-      promptMessageId: searchPromptMsg.message_id
-    };
-
-    return;
-  }
-
-  // Навигация по карточкам заявок - следующая
-  if (data.startsWith('next_order_')) {
-    const newIndex = parseInt(data.replace('next_order_', ''));
-    await bot.answerCallbackQuery(query.id);
-    await safeDeleteMessage(chatId, query.message.message_id);
-    await showOrderCards(chatId, userId, newIndex);
-    return;
-  }
-
-  // Навигация по карточкам заявок - предыдущая
-  if (data.startsWith('prev_order_')) {
-    const newIndex = parseInt(data.replace('prev_order_', ''));
-    await bot.answerCallbackQuery(query.id);
-    await safeDeleteMessage(chatId, query.message.message_id);
-    await showOrderCards(chatId, userId, newIndex);
-    return;
-  }
-
-  // Навигация по карточкам специалистов - следующий
-  if (data.startsWith('next_contractor_')) {
-    const newIndex = parseInt(data.replace('next_contractor_', ''));
-    await bot.answerCallbackQuery(query.id);
-    await safeDeleteMessage(chatId, query.message.message_id);
-    await showContractorCards(chatId, userId, newIndex);
-    return;
-  }
-
-  // Навигация по карточкам специалистов - предыдущий
-  if (data.startsWith('prev_contractor_')) {
-    const newIndex = parseInt(data.replace('prev_contractor_', ''));
-    await bot.answerCallbackQuery(query.id);
-    await safeDeleteMessage(chatId, query.message.message_id);
-    await showContractorCards(chatId, userId, newIndex);
-    return;
-  }
-
-  // Ищу людей - выбор между быстрым поиском и созданием заявки
-  if (data === 'search_people') {
+  // Добавить объект/заказ
+  if (data === 'add_order') {
     // Удаляем меню
     if (liveMessages[chatId] && liveMessages[chatId].menuMessageId) {
       try {
@@ -1849,64 +1391,14 @@ bot.on('callback_query', async (query) => {
       }
     }
     await bot.answerCallbackQuery(query.id);
+    const confirmText = `🏗 *Добавим в базу твой объект / заказ*
 
-    const menuText = `Как ты хочешь найти специалистов?
-
-⚡️ Быстрый поиск специалистов — мгновенное отображение специалистов по твоему запросу.
-
-🧾 Создать заявку — заполни анкету, и специалисты сами свяжутся с тобой.
-
-ℹ️ Сейчас ты можешь создать до 2 заявок на поиск специалистов.`;
-
-    await bot.sendMessage(chatId, menuText, {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '⚡️ Быстрый поиск специалистов', callback_data: 'quick_search_contractors' }],
-          [{ text: '🧾 Создать заявку', callback_data: 'create_order' }],
-          [{ text: '🏠 В меню', callback_data: 'main_menu' }]
-        ]
-      }
-    });
-    return;
-  }
-
-  // Создать заявку
-  if (data === 'create_order') {
-    await bot.answerCallbackQuery(query.id);
-    await safeDeleteMessage(chatId, query.message.message_id);
-
-    // Проверяем количество существующих заявок пользователя
-    const { data: existingOrders, error: checkError } = await supabase
-      .from('orders')
-      .select('id')
-      .eq('telegram_id', userId);
-
-    if (checkError) {
-      console.error('Ошибка проверки количества заявок:', checkError);
-    }
-
-    // Если уже есть 2 или больше заявок - показываем ошибку
-    if (existingOrders && existingOrders.length >= 2) {
-      await bot.sendMessage(chatId, `❌ У тебя уже есть максимальное количество заявок (2).
-
-Чтобы создать новую, нужно сначала удалить одну из существующих.`, {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📌 Моя анкета', callback_data: 'my_profile' }],
-            [{ text: '🏠 В меню', callback_data: 'main_menu' }]
-          ]
-        }
-      });
-      return;
-    }
-
-    const confirmText = `🏗 Добавим в базу твой объект / заказ
-
-Постарайся отвечать конкретно — это экономит время и тебе, и исполнителям.
+Постарайся отвечать конкретно — это экономит время и тебе\\, и исполнителям\\.
 
 Начнём?`;
 
     await bot.sendMessage(chatId, confirmText, {
+      parse_mode: 'MarkdownV2',
       reply_markup: {
         inline_keyboard: [
           [{ text: '✅ Да, начать', callback_data: 'start_order_form' }],
@@ -1917,361 +1409,32 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // Быстрый поиск специалистов (для заказчиков)
-  if (data === 'quick_search_contractors') {
+  // Добавить поставщика
+  if (data === 'add_supplier') {
+    // Удаляем меню
+    if (liveMessages[chatId] && liveMessages[chatId].menuMessageId) {
+      try {
+        await safeDeleteMessage(chatId, liveMessages[chatId].menuMessageId);
+      } catch (error) {
+        console.log('Меню уже удалено');
+      }
+    }
     await bot.answerCallbackQuery(query.id);
-    await safeDeleteMessage(chatId, query.message.message_id);
+    const confirmText = `🚚 *Добавим тебя в базу поставщиков и аренды техники*
 
-    const searchText = `Опиши, каких специалистов ты ищешь.
+Расскажи о своих услугах\\.
 
-Можно:
-— написать текстом
-— или отправить голосовое сообщение
+Начнём?`;
 
-Я подберу специалистов из Базы по твоему запросу.
-
-Пример:
-«Нужен плиточник в Москве для квартиры»`;
-
-    const searchPromptMsg = await bot.sendMessage(chatId, searchText, {
+    await bot.sendMessage(chatId, confirmText, {
+      parse_mode: 'MarkdownV2',
       reply_markup: {
         inline_keyboard: [
-          [{ text: '◀️ Назад', callback_data: 'search_people' }],
-          [{ text: '🏠 В меню', callback_data: 'main_menu' }]
+          [{ text: '✅ Да, начать', callback_data: 'start_supplier_form' }],
+          [{ text: '❌ Отмена', callback_data: 'cancel_form' }]
         ]
       }
     });
-
-    // Инициализируем состояние поиска и сохраняем ID сообщения для удаления
-    searchStates[userId] = {
-      type: 'search_contractors',
-      step: 'waiting_query',
-      promptMessageId: searchPromptMsg.message_id // Сохраняем ID для удаления
-    };
-
-    return;
-  }
-
-  // Мой профиль / заявка
-  if (data === 'my_profile') {
-    await bot.answerCallbackQuery(query.id);
-    await safeDeleteMessage(chatId, query.message.message_id);
-
-    // Получаем анкеты пользователя
-    const { data: contractorProfiles, error: contractorError } = await supabase
-      .from('contractors')
-      .select('*')
-      .eq('telegram_id', userId)
-      .order('created_at', { ascending: false });
-
-    // Получаем заявки пользователя
-    const { data: orderProfiles, error: orderError } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('telegram_id', userId)
-      .order('created_at', { ascending: false });
-
-    const contractorCount = contractorProfiles ? contractorProfiles.length : 0;
-    const orderCount = orderProfiles ? orderProfiles.length : 0;
-
-    let profileText = '📋 <b>Мои данные в Базе</b>\n\n';
-
-    if (contractorCount > 0) {
-      profileText += `👤 <b>Анкеты подрядчика:</b> ${contractorCount} из 2\n`;
-    } else {
-      profileText += `👤 Анкет подрядчика: 0 из 2\n`;
-    }
-
-    if (orderCount > 0) {
-      profileText += `🧾 <b>Заявок:</b> ${orderCount} из 2\n`;
-    } else {
-      profileText += `🧾 Заявок: 0 из 2\n`;
-    }
-
-    const buttons = [];
-
-    // Кнопки для анкет подрядчика
-    if (contractorCount > 0) {
-      buttons.push([{ text: '👤 Мои анкеты подрядчика', callback_data: 'view_my_contractors' }]);
-    }
-
-    // Кнопки для заявок
-    if (orderCount > 0) {
-      buttons.push([{ text: '🧾 Мои заявки', callback_data: 'view_my_orders' }]);
-    }
-
-    buttons.push([{ text: '🏠 В меню', callback_data: 'main_menu' }]);
-
-    await bot.sendMessage(chatId, profileText, {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: buttons
-      }
-    });
-    return;
-  }
-
-  // Просмотр анкет подрядчика
-  if (data === 'view_my_contractors') {
-    await bot.answerCallbackQuery(query.id);
-    await safeDeleteMessage(chatId, query.message.message_id);
-
-    const { data: contractorProfiles, error } = await supabase
-      .from('contractors')
-      .select('*')
-      .eq('telegram_id', userId)
-      .order('created_at', { ascending: false });
-
-    if (!contractorProfiles || contractorProfiles.length === 0) {
-      await bot.sendMessage(chatId, '❌ У тебя нет анкет подрядчика.', {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '🏠 В меню', callback_data: 'main_menu' }]
-          ]
-        }
-      });
-      return;
-    }
-
-    let listText = '👤 <b>Твои анкеты подрядчика:</b>\n\n';
-    const buttons = [];
-
-    contractorProfiles.forEach((profile, index) => {
-      const statusEmoji = profile.status === 'approved' ? '✅' : (profile.status === 'pending' ? '⏳' : '❌');
-      listText += `${index + 1}. ${statusEmoji} ${profile.name} - ${profile.category}\n`;
-      buttons.push([
-        { text: `${index + 1}. ${profile.name}`, callback_data: `view_contractor_${profile.id}` }
-      ]);
-    });
-
-    buttons.push([{ text: '◀️ Назад', callback_data: 'my_profile' }]);
-    buttons.push([{ text: '🏠 В меню', callback_data: 'main_menu' }]);
-
-    await bot.sendMessage(chatId, listText, {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: buttons
-      }
-    });
-    return;
-  }
-
-  // Просмотр заявок
-  if (data === 'view_my_orders') {
-    await bot.answerCallbackQuery(query.id);
-    await safeDeleteMessage(chatId, query.message.message_id);
-
-    const { data: orderProfiles, error } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('telegram_id', userId)
-      .order('created_at', { ascending: false });
-
-    if (!orderProfiles || orderProfiles.length === 0) {
-      await bot.sendMessage(chatId, '❌ У тебя нет заявок.', {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '🏠 В меню', callback_data: 'main_menu' }]
-          ]
-        }
-      });
-      return;
-    }
-
-    let listText = '🧾 <b>Твои заявки:</b>\n\n';
-    const buttons = [];
-
-    orderProfiles.forEach((order, index) => {
-      const statusEmoji = order.status === 'approved' ? '✅' : (order.status === 'pending' ? '⏳' : '❌');
-      listText += `${index + 1}. ${statusEmoji} ${order.company_name} - ${order.category}\n`;
-      buttons.push([
-        { text: `${index + 1}. ${order.company_name}`, callback_data: `view_order_${order.id}` }
-      ]);
-    });
-
-    buttons.push([{ text: '◀️ Назад', callback_data: 'my_profile' }]);
-    buttons.push([{ text: '🏠 В меню', callback_data: 'main_menu' }]);
-
-    await bot.sendMessage(chatId, listText, {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: buttons
-      }
-    });
-    return;
-  }
-
-  // Просмотр конкретной анкеты подрядчика
-  if (data.startsWith('view_contractor_')) {
-    const contractorId = data.replace('view_contractor_', '');
-    await bot.answerCallbackQuery(query.id);
-    await safeDeleteMessage(chatId, query.message.message_id);
-
-    const { data: contractor, error } = await supabase
-      .from('contractors')
-      .select('*')
-      .eq('id', contractorId)
-      .eq('telegram_id', userId)
-      .single();
-
-    if (!contractor) {
-      await bot.sendMessage(chatId, '❌ Анкета не найдена.');
-      return;
-    }
-
-    const cardText = formatContractorCard(contractor);
-    const statusText = contractor.status === 'approved' ? '✅ Опубликована' :
-                       (contractor.status === 'pending' ? '⏳ На модерации' : '❌ Отклонена');
-
-    await bot.sendMessage(chatId, `<b>Статус:</b> ${statusText}\n\n${cardText}`, {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🗑 Удалить анкету', callback_data: `delete_contractor_${contractorId}` }],
-          [{ text: '◀️ Назад', callback_data: 'view_my_contractors' }],
-          [{ text: '🏠 В меню', callback_data: 'main_menu' }]
-        ]
-      }
-    });
-    return;
-  }
-
-  // Просмотр конкретной заявки
-  if (data.startsWith('view_order_')) {
-    const orderId = data.replace('view_order_', '');
-    await bot.answerCallbackQuery(query.id);
-    await safeDeleteMessage(chatId, query.message.message_id);
-
-    const { data: order, error } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('id', orderId)
-      .eq('telegram_id', userId)
-      .single();
-
-    if (!order) {
-      await bot.sendMessage(chatId, '❌ Заявка не найдена.');
-      return;
-    }
-
-    const cardText = formatOrderCard(order);
-    const statusText = order.status === 'approved' ? '✅ Опубликована' :
-                       (order.status === 'pending' ? '⏳ На модерации' : '❌ Отклонена');
-
-    await bot.sendMessage(chatId, `<b>Статус:</b> ${statusText}\n\n${cardText}`, {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🗑 Удалить заявку', callback_data: `delete_order_${orderId}` }],
-          [{ text: '◀️ Назад', callback_data: 'view_my_orders' }],
-          [{ text: '🏠 В меню', callback_data: 'main_menu' }]
-        ]
-      }
-    });
-    return;
-  }
-
-  // Удаление анкеты подрядчика
-  if (data.startsWith('delete_contractor_')) {
-    const contractorId = data.replace('delete_contractor_', '');
-    await bot.answerCallbackQuery(query.id);
-    await safeDeleteMessage(chatId, query.message.message_id);
-
-    await bot.sendMessage(chatId, '⚠️ Ты уверен, что хочешь удалить эту анкету?\n\nЭто действие нельзя отменить.', {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '✅ Да, удалить', callback_data: `confirm_delete_contractor_${contractorId}` }],
-          [{ text: '❌ Отмена', callback_data: `view_contractor_${contractorId}` }]
-        ]
-      }
-    });
-    return;
-  }
-
-  // Подтверждение удаления анкеты
-  if (data.startsWith('confirm_delete_contractor_')) {
-    const contractorId = data.replace('confirm_delete_contractor_', '');
-    await bot.answerCallbackQuery(query.id);
-    await safeDeleteMessage(chatId, query.message.message_id);
-
-    const { error } = await supabase
-      .from('contractors')
-      .delete()
-      .eq('id', contractorId)
-      .eq('telegram_id', userId);
-
-    if (error) {
-      console.error('Ошибка удаления анкеты:', error);
-      await bot.sendMessage(chatId, '❌ Ошибка при удалении анкеты. Попробуй позже.');
-      return;
-    }
-
-    const successMsg = await bot.sendMessage(chatId, '✅ Анкета успешно удалена.');
-    deleteMessageAfterDelay(chatId, successMsg.message_id, 5000);
-
-    // Возвращаемся к списку анкет
-    setTimeout(() => {
-      bot.sendMessage(chatId, 'Перейди в "Моя анкета" чтобы увидеть обновленный список.', {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📌 Моя анкета', callback_data: 'my_profile' }],
-            [{ text: '🏠 В меню', callback_data: 'main_menu' }]
-          ]
-        }
-      });
-    }, 1000);
-    return;
-  }
-
-  // Удаление заявки
-  if (data.startsWith('delete_order_')) {
-    const orderId = data.replace('delete_order_', '');
-    await bot.answerCallbackQuery(query.id);
-    await safeDeleteMessage(chatId, query.message.message_id);
-
-    await bot.sendMessage(chatId, '⚠️ Ты уверен, что хочешь удалить эту заявку?\n\nЭто действие нельзя отменить.', {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '✅ Да, удалить', callback_data: `confirm_delete_order_${orderId}` }],
-          [{ text: '❌ Отмена', callback_data: `view_order_${orderId}` }]
-        ]
-      }
-    });
-    return;
-  }
-
-  // Подтверждение удаления заявки
-  if (data.startsWith('confirm_delete_order_')) {
-    const orderId = data.replace('confirm_delete_order_', '');
-    await bot.answerCallbackQuery(query.id);
-    await safeDeleteMessage(chatId, query.message.message_id);
-
-    const { error } = await supabase
-      .from('orders')
-      .delete()
-      .eq('id', orderId)
-      .eq('telegram_id', userId);
-
-    if (error) {
-      console.error('Ошибка удаления заявки:', error);
-      await bot.sendMessage(chatId, '❌ Ошибка при удалении заявки. Попробуй позже.');
-      return;
-    }
-
-    const successMsg = await bot.sendMessage(chatId, '✅ Заявка успешно удалена.');
-    deleteMessageAfterDelay(chatId, successMsg.message_id, 5000);
-
-    // Возвращаемся к списку заявок
-    setTimeout(() => {
-      bot.sendMessage(chatId, 'Перейди в "Моя анкета" чтобы увидеть обновленный список.', {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📌 Моя анкета', callback_data: 'my_profile' }],
-            [{ text: '🏠 В меню', callback_data: 'main_menu' }]
-          ]
-        }
-      });
-    }, 1000);
     return;
   }
 
@@ -2308,23 +1471,132 @@ bot.on('callback_query', async (query) => {
     // Удаляем предыдущее сообщение (главное меню или ответ на вопрос)
     await safeDeleteMessage(chatId, query.message.message_id);
 
-    const faqText = `Этот бот — База сообщества «Голос Стройки».
+    const faqText = `❓ *FAQ / Помощь*
 
-Здесь:
-— специалисты находят работу
-— заказчики находят людей
-— контакты доступны только в Базе
-
-Анкеты и заявки публикуются в сообществе
-без контактов и без флуда.
-
-Если возникают вопросы или сложности,
-пиши: @arrtproduction`;
+📚 Выбери интересующий раздел:`;
 
     await bot.sendMessage(chatId, faqText, {
+      parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
-          [{ text: '🏠 В меню', callback_data: 'main_menu' }]
+          [{ text: '🔹 Как работает каталог?', callback_data: 'faq_how_works' }],
+          [{ text: '🔹 Как добавить себя в каталог?', callback_data: 'faq_how_add' }],
+          [{ text: '🔹 Сколько стоит размещение?', callback_data: 'faq_price' }],
+          [{ text: '🔹 Как пожаловаться на подрядчика?', callback_data: 'faq_complaint' }],
+          [{ text: '◀️ Назад в меню', callback_data: 'back_to_main_menu' }]
+        ]
+      }
+    });
+    return;
+  }
+
+  // Обработка FAQ кнопок
+  if (data === 'faq_how_works') {
+    await bot.answerCallbackQuery(query.id);
+    // Удаляем предыдущее сообщение с меню FAQ
+    await safeDeleteMessage(chatId, query.message.message_id);
+
+    const text = `📖 *Как работает каталог?*
+
+Каталог "Голос Стройки" — это база проверенных подрядчиков.
+
+✅ Все анкеты проходят модерацию
+✅ Клиенты видят портфолио и отзывы
+✅ Прямой контакт с мастером
+✅ Поиск по городу и специализации
+
+Это удобный способ найти надёжного исполнителя для твоего проекта!`;
+
+    await bot.sendMessage(chatId, text, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '❓ Другой вопрос', callback_data: 'faq_help' }],
+          [{ text: '◀️ Назад в меню', callback_data: 'back_to_main_menu' }]
+        ]
+      }
+    });
+    return;
+  }
+
+  if (data === 'faq_how_add') {
+    await bot.answerCallbackQuery(query.id);
+    // Удаляем предыдущее сообщение с меню FAQ
+    await safeDeleteMessage(chatId, query.message.message_id);
+
+    const text = `➕ *Как добавить себя в каталог?*
+
+Это очень просто:
+
+1️⃣ Нажми кнопку "➕ Добавить себя в каталог" в главном меню
+2️⃣ Заполни короткую анкету (8 шагов, 2-3 минуты)
+3️⃣ Отправь анкету на модерацию
+4️⃣ Получи уведомление об одобрении
+
+После модерации твоя карточка появится в каталоге, и клиенты смогут с тобой связаться!`;
+
+    await bot.sendMessage(chatId, text, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '❓ Другой вопрос', callback_data: 'faq_help' }],
+          [{ text: '◀️ Назад в меню', callback_data: 'back_to_main_menu' }]
+        ]
+      }
+    });
+    return;
+  }
+
+  if (data === 'faq_price') {
+    await bot.answerCallbackQuery(query.id);
+    // Удаляем предыдущее сообщение с меню FAQ
+    await safeDeleteMessage(chatId, query.message.message_id);
+
+    const text = `💰 *Сколько стоит размещение?*
+
+Размещение в каталоге "Голос Стройки" — *БЕСПЛАТНО*! 🎉
+
+✅ Бесплатное создание карточки
+✅ Бесплатная модерация
+✅ Бесплатное размещение в каталоге
+✅ Неограниченное время размещения
+
+Мы хотим помочь мастерам найти клиентов, а клиентам — надёжных подрядчиков.`;
+
+    await bot.sendMessage(chatId, text, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '❓ Другой вопрос', callback_data: 'faq_help' }],
+          [{ text: '◀️ Назад в меню', callback_data: 'back_to_main_menu' }]
+        ]
+      }
+    });
+    return;
+  }
+
+  if (data === 'faq_complaint') {
+    await bot.answerCallbackQuery(query.id);
+    // Удаляем предыдущее сообщение с меню FAQ
+    await safeDeleteMessage(chatId, query.message.message_id);
+
+    const text = `⚠️ *Как пожаловаться на подрядчика?*
+
+Если у тебя возникла проблема с подрядчиком:
+
+1️⃣ Нажми кнопку "⭕️ Отправить жалобу" в главном меню
+2️⃣ Опиши ситуацию подробно
+3️⃣ Укажи имя подрядчика и его контакт
+4️⃣ По возможности приложи доказательства
+
+Мы рассмотрим жалобу в течение 24 часов и примем меры: от предупреждения до удаления из каталога.`;
+
+    await bot.sendMessage(chatId, text, {
+      parse_mode: 'Markdown',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '❓ Другой вопрос', callback_data: 'faq_help' }],
+          [{ text: '◀️ Назад в меню', callback_data: 'back_to_main_menu' }]
         ]
       }
     });
@@ -2521,206 +1793,16 @@ async function showSearchResults(chatId, userId, offset) {
 }
 
 function formatContractorCard(contractor) {
-  const tripsText = contractor.ready_for_trips ? ' — готов к командировкам' : '';
-  const advantages = contractor.professional_advantages || 'не указано';
+  return `━━━━━━━━━━━━━━━
+🔨 *Специализация:* ${contractor.specialization}
+📍 *Город:* ${contractor.city}
+👤 *Имя:* ${contractor.name}
+⭐️ *Опыт:* ${contractor.experience}
+💬 _"${contractor.description}"_
+💵 *Цена:* ${contractor.price}
 
-  // Убираем дубль @ если telegram_tag уже содержит @
-  const telegramTag = contractor.telegram_tag ?
-    (contractor.telegram_tag.startsWith('@') ? contractor.telegram_tag : `@${contractor.telegram_tag}`) :
-    'не указан';
-
-  return `━━━━━━━━━━━━━━━━━━━━━━━
-
-👤 <b>${contractor.name}</b>
-
-📂 <b>Категория</b>
-${contractor.category}
-
-🔧 <b>Специализация</b>
-${contractor.specialization}
-
-💼 <b>Формат работы</b>
-${contractor.work_format}
-
-📍 <b>Город</b>
-${contractor.city}${tripsText}
-
-⏱ <b>Опыт работы</b>
-${contractor.experience}
-
-🏗 <b>Задачи и объекты</b>
-${contractor.objects_worked}
-
-${advantages !== 'не указано' ? `⭐️ <b>Преимущества</b>\n${advantages}\n\n` : ''}📋 <b>Формат сотрудничества</b>
-${contractor.cooperation_format}
-
-📞 <b>Контакт</b>
-${contractor.contact}
-
-✉️ <b>Telegram</b>
-${telegramTag}
-
-━━━━━━━━━━━━━━━━━━━━━━━`;
-}
-
-function formatOrderCard(order) {
-  const requirements = order.executor_requirements || 'не указано';
-
-  // Убираем дубль @ если telegram_tag уже содержит @
-  const telegramTag = order.telegram_tag ?
-    (order.telegram_tag.startsWith('@') ? order.telegram_tag : `@${order.telegram_tag}`) :
-    'не указан';
-
-  return `━━━━━━━━━━━━━━━━━━━━━━━
-
-🔍 <b>Ищут специалиста</b>
-${order.category}
-
-🏢 <b>Заказчик</b>
-${order.company_name}
-
-📍 <b>Город / объект</b>
-${order.city_location}
-
-⏰ <b>Актуальность</b>
-${order.validity_period}
-
-📝 <b>Задача</b>
-${order.work_type}
-
-${requirements !== 'не указано' ? `✅ <b>Требования</b>\n${requirements}\n\n` : ''}📞 <b>Контакт</b>
-${order.contact}
-
-✉️ <b>Telegram</b>
-${telegramTag}
-
-━━━━━━━━━━━━━━━━━━━━━━━`;
-}
-
-// Функция показа карточек заявок (для специалистов)
-async function showOrderCards(chatId, userId, currentIndex) {
-  const searchData = searchStates[userId];
-
-  if (!searchData || !searchData.results || searchData.results.length === 0) {
-    await bot.sendMessage(chatId, '❌ Результаты поиска не найдены. Начни поиск заново.');
-    return;
-  }
-
-  const orders = searchData.results;
-  const currentOrder = orders[currentIndex];
-
-  if (!currentOrder) {
-    await bot.sendMessage(chatId, '❌ Заявка не найдена.');
-    return;
-  }
-
-  // Формируем текст карточки с номером
-  const cardText = `📊 <b>Результат ${currentIndex + 1} из ${orders.length}</b>\n\n${formatOrderCard(currentOrder)}`;
-
-  // Формируем кнопки навигации
-  const buttons = [];
-
-  // Кнопки навигации по карточкам
-  const navButtons = [];
-  if (currentIndex > 0) {
-    navButtons.push({ text: '◀️ Предыдущее', callback_data: `prev_order_${currentIndex - 1}` });
-  }
-  if (currentIndex < orders.length - 1) {
-    navButtons.push({ text: '▶️ Следующее', callback_data: `next_order_${currentIndex + 1}` });
-  }
-  if (navButtons.length > 0) {
-    buttons.push(navButtons);
-  }
-
-  // Кнопка в меню
-  buttons.push([{ text: '🏠 В меню', callback_data: 'main_menu' }]);
-
-  await bot.sendMessage(chatId, cardText, {
-    parse_mode: 'HTML',
-    reply_markup: {
-      inline_keyboard: buttons
-    }
-  });
-}
-
-// Функция показа карточек специалистов (для заказчиков)
-async function showContractorCards(chatId, userId, currentIndex) {
-  const searchData = searchStates[userId];
-
-  if (!searchData || !searchData.results || searchData.results.length === 0) {
-    await bot.sendMessage(chatId, '❌ Результаты поиска не найдены. Начни поиск заново.');
-    return;
-  }
-
-  const contractors = searchData.results;
-  const currentContractor = contractors[currentIndex];
-
-  if (!currentContractor) {
-    await bot.sendMessage(chatId, '❌ Специалист не найден.');
-    return;
-  }
-
-  // Формируем текст карточки с номером
-  const cardText = `📊 <b>Результат ${currentIndex + 1} из ${contractors.length}</b>\n\n${formatContractorCard(currentContractor)}`;
-
-  // Формируем кнопки навигации
-  const buttons = [];
-
-  // Кнопки навигации по карточкам
-  const navButtons = [];
-  if (currentIndex > 0) {
-    navButtons.push({ text: '◀️ Предыдущий', callback_data: `prev_contractor_${currentIndex - 1}` });
-  }
-  if (currentIndex < contractors.length - 1) {
-    navButtons.push({ text: '▶️ Следующий', callback_data: `next_contractor_${currentIndex + 1}` });
-  }
-  if (navButtons.length > 0) {
-    buttons.push(navButtons);
-  }
-
-  // Кнопка портфолио (если есть)
-  if (currentContractor.channel_post_id) {
-    const portfolioUrl = `https://t.me/${COMMUNITY_CHANNEL_NAME}/${currentContractor.channel_post_id}`;
-    buttons.push([{ text: '🖼 Портфолио специалиста', url: portfolioUrl }]);
-  }
-
-  // Кнопка создать заявку
-  buttons.push([{ text: '🧾 Создать заявку', callback_data: 'create_order' }]);
-
-  // Кнопка в меню
-  buttons.push([{ text: '🏠 В меню', callback_data: 'main_menu' }]);
-
-  // Если есть портфолио (фото), отправляем с фото
-  if (currentContractor.portfolio && currentContractor.portfolio.length > 0) {
-    try {
-      // Берем первое фото из портфолио
-      const firstPhoto = currentContractor.portfolio[0];
-      await bot.sendPhoto(chatId, firstPhoto, {
-        caption: cardText,
-        parse_mode: 'HTML',
-        reply_markup: {
-          inline_keyboard: buttons
-        }
-      });
-    } catch (error) {
-      console.error('Ошибка отправки фото портфолио:', error);
-      // Если не удалось отправить фото, отправляем только текст
-      await bot.sendMessage(chatId, cardText, {
-        parse_mode: 'HTML',
-        reply_markup: {
-          inline_keyboard: buttons
-        }
-      });
-    }
-  } else {
-    // Если нет портфолио, отправляем только текст
-    await bot.sendMessage(chatId, cardText, {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: buttons
-      }
-    });
-  }
+📞 *Контакт:* ${contractor.contact}
+📸 *Портфолио:* ${contractor.portfolio_link}`;
 }
 
 // ==================== ПРОЦЕСС АНКЕТЫ ====================
@@ -2751,6 +1833,21 @@ async function startOrderFormProcess(chatId, userId, username) {
   };
 
   await askOrderStep1(chatId, userId);
+}
+
+// ==================== ВЕТКА: ПОСТАВЩИК ====================
+
+async function startSupplierFormProcess(chatId, userId, username) {
+  // Инициализируем состояние для ветки suppliers
+  userStates[userId] = {
+    formType: 'supplier',
+    step: 1,
+    chatId,
+    username: username || 'неизвестен',
+    data: {}
+  };
+
+  await askSupplierStep1(chatId, userId);
 }
 
 // Шаг 1 - Формат работы (специалист/бригада/компания)
@@ -2788,12 +1885,50 @@ _Выбери из кнопок ниже или напиши свой вариа
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 2 - Специализация (было шаг 3)
+// Шаг 2 - Город/регион
 async function askStep2(chatId, userId) {
   const userData = userStates[userId].data;
   const formData = formatCurrentFormData(userData, 2);
 
-  const text = `${formData}🔧 *Шаг 2 из 11* — Специализация
+  const text = `${formData}📍 *Шаг 2 из 11* — Город/регион
+
+В каком городе работаешь?
+
+_Выбери из кнопок или напиши свой город_`;
+
+  // Удаляем предыдущее сообщение шага если оно есть
+  if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
+    try {
+      await safeDeleteMessage(chatId, liveMessages[userId].formStepMessageId);
+    } catch (error) {
+      // Игнорируем ошибку если сообщение уже удалено
+    }
+  }
+
+  // Отправляем основное сообщение с инлайн-кнопками
+  const msg = await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: 'Москва', callback_data: 'city_moscow' }],
+        [{ text: 'Санкт-Петербург', callback_data: 'city_spb' }],
+        [{ text: 'Готов работать в любом городе', callback_data: 'city_any' }],
+        [{ text: '◀️ Назад', callback_data: 'form_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
+      ]
+    }
+  });
+
+  // Сохраняем ID сообщения шага
+  if (!liveMessages[userId]) liveMessages[userId] = {};
+  liveMessages[userId].formStepMessageId = msg.message_id;
+}
+
+// Шаг 3 - Специализация (только свободный ввод)
+async function askStep3(chatId, userId) {
+  const userData = userStates[userId].data;
+  const formData = formatCurrentFormData(userData, 3);
+
+  const text = `${formData}🔧 *Шаг 3 из 11* — Специализация
 
 Кратко напиши чем занимаешься, какие услуги оказываешь?
 
@@ -2823,90 +1958,12 @@ _Например: "Отделка квартир, малярка, плитка,
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 3 - Город/регион + готовность к командировкам (было шаг 2)
-async function askStep3(chatId, userId) {
-  const userData = userStates[userId].data;
-  const formData = formatCurrentFormData(userData, 3);
-
-  // Определяем состояние переключателя командировок
-  const readyForTrips = userData.readyForTrips || false;
-  const tripsToggle = readyForTrips ? '✅ Готов к командировкам' : '☐ Готов к командировкам';
-
-  const text = `${formData}📍 *Шаг 3 из 11* — Город/регион
-
-В каком городе работаешь?
-
-_Выбери из кнопок или напиши свой город_`;
-
-  // Удаляем предыдущее сообщение шага если оно есть
-  if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
-    try {
-      await safeDeleteMessage(chatId, liveMessages[userId].formStepMessageId);
-    } catch (error) {
-      // Игнорируем ошибку если сообщение уже удалено
-    }
-  }
-
-  // Отправляем основное сообщение с инлайн-кнопками
-  const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: 'Москва', callback_data: 'city_moscow' }],
-        [{ text: 'Санкт-Петербург', callback_data: 'city_spb' }],
-        [{ text: 'Готов работать в любом городе', callback_data: 'city_any' }],
-        [{ text: tripsToggle, callback_data: 'toggle_trips' }],
-        [{ text: '◀️ Назад', callback_data: 'form_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
-      ]
-    }
-  });
-
-  // Сохраняем ID сообщения шага
-  if (!liveMessages[userId]) liveMessages[userId] = {};
-  liveMessages[userId].formStepMessageId = msg.message_id;
-}
-
-// Шаг 4 - Имя (НОВЫЙ ШАГ)
+// Шаг 4 - Опыт работы (с кнопками + свободный ввод)
 async function askStep4(chatId, userId) {
   const userData = userStates[userId].data;
   const formData = formatCurrentFormData(userData, 4);
 
-  const text = `${formData}👤 *Шаг 4 из 11* — Имя
-
-Как к тебе обращаться?
-
-_Напиши своё имя или название компании_`;
-
-  // Удаляем предыдущее сообщение шага если оно есть
-  if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
-    try {
-      await safeDeleteMessage(chatId, liveMessages[userId].formStepMessageId);
-    } catch (error) {
-      // Игнорируем ошибку если сообщение уже удалено
-    }
-  }
-
-  // Отправляем основное сообщение с инлайн-кнопками
-  const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: '◀️ Назад', callback_data: 'form_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
-      ]
-    }
-  });
-
-  // Сохраняем ID сообщения шага
-  if (!liveMessages[userId]) liveMessages[userId] = {};
-  liveMessages[userId].formStepMessageId = msg.message_id;
-}
-
-// Шаг 5 - Опыт работы (было шаг 4)
-async function askStep5(chatId, userId) {
-  const userData = userStates[userId].data;
-  const formData = formatCurrentFormData(userData, 5);
-
-  const text = `${formData}⏱ *Шаг 5 из 11* — Опыт работы в строительстве
+  const text = `${formData}⏱ *Шаг 4 из 11* — Опыт работы в строительстве
 
 Сколько лет опыта?
 
@@ -2939,12 +1996,12 @@ _Выбери из кнопок или напиши свой вариант_`;
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 6 - На каких объектах работали (было шаг 5)
-async function askStep6(chatId, userId) {
+// Шаг 5 - На каких объектах работали (только свободный ввод)
+async function askStep5(chatId, userId) {
   const userData = userStates[userId].data;
-  const formData = formatCurrentFormData(userData, 6);
+  const formData = formatCurrentFormData(userData, 5);
 
-  const text = `${formData}🏗 *Шаг 6 из 11* — На каких объектах работали
+  const text = `${formData}🏗 *Шаг 5 из 11* — На каких объектах работали
 
 Опиши какие объекты выполнял:
 
@@ -2974,18 +2031,16 @@ _Например: "Квартиры, офисы, коттеджи. Работа
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 7 - Профессиональные преимущества (НОВЫЙ ШАГ - необязательный)
-async function askStep7(chatId, userId) {
+// Шаг 6 - Объём работ (только свободный ввод)
+async function askStep6(chatId, userId) {
   const userData = userStates[userId].data;
-  const formData = formatCurrentFormData(userData, 7);
+  const formData = formatCurrentFormData(userData, 6);
 
-  const text = `${formData}⭐ *Шаг 7 из 11* — Профессиональные преимущества
+  const text = `${formData}📊 *Шаг 6 из 11* — Объём работ
 
-Есть ли у тебя профессиональные преимущества? (необязательно)
+Какой объём работ можешь выполнить? Сколько человек в команде?
 
-_Например: "Есть автокран 25 тонн", "Своя автовышка", "Бригада с опытом монтажа фасадов", "Есть допуски СРО"_
-
-Можешь пропустить этот шаг, если нет особых преимуществ.`;
+_Например: "Работаю один, могу взять объект до 50 кв.м." или "Бригада 5 человек, можем выполнить квартиру под ключ за месяц"_`;
 
   // Удаляем предыдущее сообщение шага если оно есть
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
@@ -3001,7 +2056,6 @@ _Например: "Есть автокран 25 тонн", "Своя автов
     parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [
-        [{ text: '⏭ Пропустить', callback_data: 'skip_advantages' }],
         [{ text: '◀️ Назад', callback_data: 'form_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
       ]
     }
@@ -3012,12 +2066,12 @@ _Например: "Есть автокран 25 тонн", "Своя автов
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 8 - Формат сотрудничества (было шаг 7, переименовано из documents_form)
-async function askStep8(chatId, userId) {
+// Шаг 7 - Документы/форма работы (с кнопками + свободный ввод)
+async function askStep7(chatId, userId) {
   const userData = userStates[userId].data;
-  const formData = formatCurrentFormData(userData, 8);
+  const formData = formatCurrentFormData(userData, 7);
 
-  const text = `${formData}📄 *Шаг 8 из 11* — Формат сотрудничества
+  const text = `${formData}📄 *Шаг 7 из 11* — Документы / Форма работы
 
 Как работаешь?
 
@@ -3037,12 +2091,9 @@ _Выбери из кнопок или напиши свой вариант_`;
     parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [
-        [{ text: 'ИП', callback_data: 'coop_ip' }],
-        [{ text: 'Самозанятый', callback_data: 'coop_samozanyaty' }],
-        [{ text: 'ООО', callback_data: 'coop_ooo' }],
-        [{ text: 'По договору', callback_data: 'coop_contract' }],
-        [{ text: 'Без оформления', callback_data: 'coop_none' }],
-        [{ text: 'Любой формат', callback_data: 'coop_any' }],
+        [{ text: 'ИП', callback_data: 'doc_ip' }, { text: 'Самозанятый', callback_data: 'doc_samozanyaty' }],
+        [{ text: 'ООО', callback_data: 'doc_ooo' }, { text: 'По договору', callback_data: 'doc_contract' }],
+        [{ text: 'Без оформления', callback_data: 'doc_none' }],
         [{ text: '◀️ Назад', callback_data: 'form_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
       ]
     }
@@ -3053,16 +2104,16 @@ _Выбери из кнопок или напиши свой вариант_`;
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 9 - Условия оплаты (было шаг 8)
-async function askStep9(chatId, userId) {
+// Шаг 8 - Условия оплаты (только свободный ввод)
+async function askStep8(chatId, userId) {
   const userData = userStates[userId].data;
-  const formData = formatCurrentFormData(userData, 9);
+  const formData = formatCurrentFormData(userData, 8);
 
-  const text = `${formData}💰 *Шаг 9 из 11* — Условия оплаты
+  const text = `${formData}💰 *Шаг 8 из 11* — Условия оплаты
 
-Как принимаешь оплату?
+Напиши условия оплаты и стоимость:
 
-_Выбери из кнопок или напиши свой вариант_`;
+_Например: "от 2000 ₽/м², оплата 50% аванс, 50% после завершения" или "Договорная, обсуждается индивидуально"_`;
 
   // Удаляем предыдущее сообщение шага если оно есть
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
@@ -3078,9 +2129,6 @@ _Выбери из кнопок или напиши свой вариант_`;
     parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [
-        [{ text: 'Нал', callback_data: 'payment_cash' }],
-        [{ text: 'Безнал', callback_data: 'payment_cashless' }],
-        [{ text: 'Обсуждается', callback_data: 'payment_negotiable' }],
         [{ text: '◀️ Назад', callback_data: 'form_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
       ]
     }
@@ -3091,12 +2139,12 @@ _Выбери из кнопок или напиши свой вариант_`;
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 10 - Контакты (было шаг 9)
-async function askStep10(chatId, userId) {
+// Шаг 9 - Контакты (номер телефона)
+async function askStep9(chatId, userId) {
   const userData = userStates[userId].data;
-  const formData = formatCurrentFormData(userData, 10);
+  const formData = formatCurrentFormData(userData, 9);
 
-  const text = `${formData}📞 *Шаг 10 из 11* — Контакты
+  const text = `${formData}📞 *Шаг 9 из 11* — Контакты
 
 Оставь номер телефона для клиентов:
 
@@ -3129,18 +2177,18 @@ _Можешь отправить свой контакт кнопкой ниже
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 11 - Фото (было шаг 10)
-async function askStep11(chatId, userId) {
+// Шаг 10 - Фото
+async function askStep10(chatId, userId) {
   const userData = userStates[userId].data;
-  const formData = formatCurrentFormData(userData, 11);
+  const formData = formatCurrentFormData(userData, 10);
 
-  const text = `${formData}📷 *Шаг 11 из 11* — Фотография профиля
+  const text = `${formData}📷 *Шаг 10 из 11* — Фотография профиля
 
 Добавь свою фотографию, чтобы привлечь больше работодателей!
 
 Анкеты с фото получают *в 3 раза больше откликов*.
 
-Отправь фото или нажми "Подтвердить и завершить" 👇`;
+Отправь фото или нажми "Пропустить" 👇`;
 
   // Удаляем предыдущее сообщение шага если оно есть
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
@@ -3156,10 +2204,47 @@ async function askStep11(chatId, userId) {
     parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [
-        [{ text: '✅ Подтвердить и завершить', callback_data: 'confirm_form' }],
+        [{ text: '⏭ Пропустить', callback_data: 'skip_photo' }],
         [{ text: '◀️ Назад', callback_data: 'form_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
       ],
       remove_keyboard: true
+    }
+  });
+
+  // Сохраняем ID нового сообщения
+  if (!liveMessages[userId]) liveMessages[userId] = {};
+  liveMessages[userId].formStepMessageId = msg.message_id;
+}
+
+// Шаг 11 - Финальное согласование (проверка данных)
+async function askStep11(chatId, userId) {
+  const userData = userStates[userId].data;
+  const formData = formatCurrentFormData(userData, 11);
+
+  const text = `${formData}✅ *Шаг 11 из 11* — Финальное согласование
+
+*Проверьте правильность ввода данных.*
+
+Если всё верно — нажми *"Подтвердить"*
+Если нужно исправить — нажми *"Назад"*`;
+
+  // Удаляем предыдущее сообщение шага если оно есть
+  if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
+    try {
+      await safeDeleteMessage(chatId, liveMessages[userId].formStepMessageId);
+    } catch (error) {
+      // Игнорируем ошибку если сообщение уже удалено
+    }
+  }
+
+  // Отправляем основное сообщение с инлайн-кнопками
+  const msg = await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '✅ Подтвердить', callback_data: 'confirm_form' }],
+        [{ text: '◀️ Назад', callback_data: 'form_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
+      ]
     }
   });
 
@@ -3172,59 +2257,62 @@ async function askStep11(chatId, userId) {
 async function finishForm(chatId, userId, telegramUsername) {
   const userData = userStates[userId];
 
-  // Сохраняем в базу данных (этап 5: добавлена категория)
+  // Сохраняем в базу данных
   const result = await saveContractorToDatabase({
     userId,
     username: userData.username,
     workFormat: userData.data.workFormat,
-    specialization: userData.data.specialization,
     city: userData.data.city,
-    readyForTrips: userData.data.readyForTrips || false, // этап 3
-    name: userData.data.name, // этап 3
+    specialization: userData.data.specialization,
     experience: userData.data.experience,
     objectsWorked: userData.data.objectsWorked,
-    professionalAdvantages: userData.data.professionalAdvantages || null, // этап 3
-    cooperationFormat: userData.data.cooperationFormat, // этап 3: переименовано
+    workVolume: userData.data.workVolume,
+    documentsForm: userData.data.documentsForm,
     paymentConditions: userData.data.paymentConditions,
     contact: userData.data.contact,
     photoUrl: userData.data.photoUrl,
-    telegramTag: telegramUsername ? `@${telegramUsername}` : null,
-    category: userData.data.category || null, // этап 5: AI-определенная категория
-    role: userData.selectedRole || null // этап 2: передаем роль из userStates
+    telegramTag: telegramUsername ? `@${telegramUsername}` : null
   });
 
   if (result.success) {
-    const successText = `Готово ✅
-Ты добавлен(а) в базу исполнителей «Голоса Стройки».
+    const successText = `🎉 *Отлично\\!*
 
-💡 Что это даёт:
-— тебя могут найти заказчики и прорабы через базу и бота;
-— админ сможет быстро оформить твою заявку в закрытые ветки «Ищу объект» и «Ваши работы» по запросу.
+Твоя анкета отправлена на модерацию\\.
 
-📢 Если захочешь разместить объявление в закрытых ветках — просто напиши админу: @wkmnnn.`;
+Когда карточка будет утверждена — мы пришлём уведомление\\.
+
+📋 *Твои данные:*
+💼 Формат работы: ${escapeMarkdown(userData.data.workFormat)}
+📍 Город: ${escapeMarkdown(userData.data.city)}
+🔧 Специализация: ${escapeMarkdown(userData.data.specialization)}
+⏱ Опыт: ${escapeMarkdown(userData.data.experience)}
+🏗 Объекты: ${escapeMarkdown(userData.data.objectsWorked)}
+📊 Объём работ: ${escapeMarkdown(userData.data.workVolume)}
+📄 Документы: ${escapeMarkdown(userData.data.documentsForm)}
+💰 Условия оплаты: ${escapeMarkdown(userData.data.paymentConditions)}
+📞 Контакт: ${escapeMarkdown(userData.data.contact)}
+📷 Фото: ${userData.data.photoUrl ? 'добавлено' : 'нет фото'}`;
 
     await bot.sendMessage(chatId, successText, {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🔁 Заполнить ещё одну анкету', callback_data: 'search_work' }],
-          [{ text: '🏠 В главное меню', callback_data: 'main_menu' }]
-        ]
-      }
+      parse_mode: 'MarkdownV2',
+      ...mainMenuKeyboard
     });
   } else {
     await bot.sendMessage(chatId, '❌ Произошла ошибка при сохранении данных. Попробуй позже.', mainMenuKeyboard);
-    await showMainMenu(chatId);
   }
 
   // Очищаем состояние
   delete userStates[userId];
+
+  // Показываем главное меню
+  await showMainMenu(chatId);
 }
 
 // Завершение анкеты Order
 async function finishOrderForm(chatId, userId) {
   const userData = userStates[userId];
 
-  // Сохраняем в базу данных (этап 5: добавлена категория)
+  // Сохраняем в базу данных
   const result = await saveOrderToDatabase({
     userId,
     username: userData.username,
@@ -3232,67 +2320,103 @@ async function finishOrderForm(chatId, userId) {
     cityLocation: userData.data.cityLocation,
     objectType: userData.data.objectType,
     workType: userData.data.workType,
+    volumeTimeline: userData.data.volumeTimeline,
     executorRequirements: userData.data.executorRequirements,
-    validityPeriod: userData.data.validityPeriod,
-    companyName: userData.data.companyName,
+    paymentConditions: userData.data.paymentConditions,
+    cooperationFormat: userData.data.cooperationFormat,
     contact: userData.data.contact,
-    telegramTag: userData.data.telegramTag,
-    category: userData.data.category || null, // этап 5: AI-определенная категория
-    role: userData.selectedRole || null // этап 2: передаем роль из userStates
+    telegramTag: userData.data.telegramTag
   });
 
   if (result.success) {
-    const successText = `Спасибо, заявка по объекту сохранена ✅
-Ты добавлен(а) в базу объектов «Голоса Стройки».
+    const successText = `🎉 *Отлично\\!*
 
-💡 Что дальше:
-— по этим данным админ сможет оформить объявление в закрытой ветке «Нужен подрядчик»;
-— дальше бот и админы смогут подбирать под тебя исполнителей.
+Твоя заявка отправлена на модерацию\\.
 
-📢 Чтобы ускорить публикацию объявления в ветке — напиши админу: @wkmnnn.`;
+Когда заявка будет утверждена — мы пришлём уведомление\\.
 
-    try {
-      await bot.sendMessage(chatId, successText, {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '➕ Добавить ещё один запрос', callback_data: 'search_people' }],
-            [{ text: '🧱 Заполнить анкету исполнителя', callback_data: 'search_work' }],
-            [{ text: '🏠 В главное меню', callback_data: 'main_menu' }]
-          ]
-        }
-      });
-    } catch (error) {
-      console.error('❌ Ошибка отправки сообщения после сохранения заявки:', error.message);
-      // Пробуем отправить хотя бы простое сообщение
-      try {
-        await bot.sendMessage(chatId, successText);
-      } catch (retryError) {
-        console.error('❌ Повторная ошибка отправки сообщения:', retryError.message);
-      }
-    }
+📋 *Твоя заявка:*
+👥 Кого ищешь: ${escapeMarkdown(userData.data.requestType)}
+📍 Город: ${escapeMarkdown(userData.data.cityLocation)}
+🏗 Тип объекта: ${escapeMarkdown(userData.data.objectType)}
+🔨 Работы: ${escapeMarkdown(userData.data.workType)}
+📊 Объём и сроки: ${escapeMarkdown(userData.data.volumeTimeline)}
+👤 Требования: ${escapeMarkdown(userData.data.executorRequirements)}
+💰 Оплата: ${escapeMarkdown(userData.data.paymentConditions)}
+🤝 Формат: ${escapeMarkdown(userData.data.cooperationFormat)}
+📞 Контакт: ${escapeMarkdown(userData.data.contact)}`;
+
+    await bot.sendMessage(chatId, successText, {
+      parse_mode: 'MarkdownV2',
+      ...mainMenuKeyboard
+    });
   } else {
-    try {
-      await bot.sendMessage(chatId, '❌ Произошла ошибка при сохранении данных. Попробуй позже.', mainMenuKeyboard);
-      await showMainMenu(chatId);
-    } catch (error) {
-      console.error('❌ Ошибка отправки сообщения об ошибке:', error.message);
-    }
+    await bot.sendMessage(chatId, '❌ Произошла ошибка при сохранении данных. Попробуй позже.', mainMenuKeyboard);
   }
 
   // Очищаем состояние
   delete userStates[userId];
+
+  // Показываем главное меню
+  await showMainMenu(chatId);
 }
 
 // Завершение анкеты Supplier
+async function finishSupplierForm(chatId, userId) {
+  const userData = userStates[userId];
+
+  // Сохраняем в базу данных
+  const result = await saveSupplierToDatabase({
+    userId,
+    username: userData.username,
+    supplierType: userData.data.supplierType,
+    productsServices: userData.data.productsServices,
+    geography: userData.data.geography,
+    targetAudience: userData.data.targetAudience,
+    minOrderConditions: userData.data.minOrderConditions,
+    contact: userData.data.contact,
+    companyInfo: userData.data.companyInfo,
+    telegramTag: userData.data.telegramTag
+  });
+
+  if (result.success) {
+    const successText = `🎉 *Отлично\\!*
+
+Твоя анкета отправлена на модерацию\\.
+
+Когда анкета будет утверждена — мы пришлём уведомление\\.
+
+📋 *Твоя анкета:*
+🏢 Формат: ${escapeMarkdown(userData.data.supplierType)}
+📦 Что поставляете: ${escapeMarkdown(userData.data.productsServices)}
+🌍 География: ${escapeMarkdown(userData.data.geography)}
+👥 Для кого: ${escapeMarkdown(userData.data.targetAudience)}
+📋 Условия: ${escapeMarkdown(userData.data.minOrderConditions)}
+📞 Контакт: ${escapeMarkdown(userData.data.contact)}
+🏢 О компании: ${escapeMarkdown(userData.data.companyInfo)}`;
+
+    await bot.sendMessage(chatId, successText, {
+      parse_mode: 'MarkdownV2',
+      ...mainMenuKeyboard
+    });
+  } else {
+    await bot.sendMessage(chatId, '❌ Произошла ошибка при сохранении данных. Попробуй позже.', mainMenuKeyboard);
+  }
+
+  // Очищаем состояние
+  delete userStates[userId];
+
+  // Показываем главное меню
+  await showMainMenu(chatId);
+}
+
 // ==================== ШАГИ ДЛЯ ВЕТКИ ORDER (ОБЪЕКТ/ЗАКАЗ) ====================
 
 // Шаг 1 Order - Тип запроса
 async function askOrderStep1(chatId, userId) {
-  const text = `👷 *Шаг 1 из 9* — Кого ты ищешь?
+  const text = `📝 *Шаг 1 из 10* — Кого ищешь?
 
-Напиши специализацию своими словами.
-
-_Пример: "Монтажник вент. фасадов" или "Бригада каменщиков"_`;
+_Выбери из кнопок ниже_`;
 
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
     try {
@@ -3304,6 +2428,9 @@ _Пример: "Монтажник вент. фасадов" или "Брига�
     parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [
+        [{ text: 'Бригаду / подрядчика', callback_data: 'ord_req_brigade' }],
+        [{ text: 'Рабочих по сменам', callback_data: 'ord_req_workers' }],
+        [{ text: 'Инженерный состав', callback_data: 'ord_req_engineers' }],
         [{ text: '❌ Отменить', callback_data: 'cancel_form' }]
       ]
     }
@@ -3322,7 +2449,7 @@ async function askOrderStep2(chatId, userId) {
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}📍 *Шаг 2 из 9* — Город и локация объекта
+  const text = `${formText}📍 *Шаг 2 из 10* — Город и локация объекта
 
 _Выбери город из кнопок или напиши свой вариант_`;
 
@@ -3357,7 +2484,7 @@ async function askOrderStep3(chatId, userId) {
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}🏗 *Шаг 3 из 9* — Тип объекта
+  const text = `${formText}🏗 *Шаг 3 из 10* — Тип объекта
 
 _Выбери тип из кнопок или напиши свой вариант_`;
 
@@ -3372,10 +2499,11 @@ _Выбери тип из кнопок или напиши свой вариан
     reply_markup: {
       inline_keyboard: [
         [{ text: 'Квартира', callback_data: 'ord_obj_apartment' }],
-        [{ text: 'Частный дом', callback_data: 'ord_obj_house' }],
-        [{ text: 'Коммерческий объект', callback_data: 'ord_obj_commercial' }],
-        [{ text: 'Промышленный объект', callback_data: 'ord_obj_industrial' }],
-        [{ text: 'Дороги / инфраструктура', callback_data: 'ord_obj_roads' }],
+        [{ text: 'Дом', callback_data: 'ord_obj_house' }],
+        [{ text: 'ЖК', callback_data: 'ord_obj_residential' }],
+        [{ text: 'Коммерция', callback_data: 'ord_obj_commercial' }],
+        [{ text: 'Промышленный', callback_data: 'ord_obj_industrial' }],
+        [{ text: 'Дороги', callback_data: 'ord_obj_roads' }],
         [{ text: '◀️ Назад', callback_data: 'order_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
       ]
     }
@@ -3385,7 +2513,7 @@ _Выбери тип из кнопок или напиши свой вариан
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 4 Order - Описание задачи (объединено: работы + объём)
+// Шаг 4 Order - Какие работы нужны
 async function askOrderStep4(chatId, userId) {
   const userData = userStates[userId].data;
   let formText = '📋 *Твоя заявка:*\n\n';
@@ -3396,18 +2524,9 @@ async function askOrderStep4(chatId, userId) {
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}📝 *Шаг 4 из 9* — Описание задачи
+  const text = `${formText}🔨 *Шаг 4 из 10* — Какие работы нужны?
 
-Опиши задачу.
-Что нужно сделать?
-С чего начинается работа?
-Сколько специалистов требуется?
-
-Можно написать или записать голосовое.
-
-_Пример:_
-_«Нужно уложить плитку в санузле, стены и пол._
-_Площадь около 20 м², нужен 1 человек.»_`;
+_Опиши какие работы требуются на объекте_`;
 
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
     try {
@@ -3428,7 +2547,7 @@ _Площадь около 20 м², нужен 1 человек.»_`;
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 5 Order - Требования к исполнителю (было шаг 6, добавлена кнопка "Пропустить")
+// Шаг 5 Order - Объём и сроки
 async function askOrderStep5(chatId, userId) {
   const userData = userStates[userId].data;
   let formText = '📋 *Твоя заявка:*\n\n';
@@ -3436,16 +2555,13 @@ async function askOrderStep5(chatId, userId) {
   if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
   if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
   if (userData.objectType) formText += `3️⃣ Тип объекта: ${userData.objectType}\n`;
-  if (userData.workType) formText += `4️⃣ Описание задачи: ${userData.workType.substring(0, 50)}...\n`;
+  if (userData.workType) formText += `4️⃣ Работы: ${userData.workType}\n`;
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}👤 *Шаг 5 из 9* — Требования к исполнителю
+  const text = `${formText}📊 *Шаг 5 из 10* — Объём и сроки
 
-Если есть особые требования — укажи их здесь.
-Например: опыт, собственное оборудование, допуски, квалификации.
-
-Если требований нет — пропусти шаг.`;
+_Укажи объём работ и желаемые сроки выполнения_`;
 
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
     try {
@@ -3457,7 +2573,6 @@ async function askOrderStep5(chatId, userId) {
     parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [
-        [{ text: '⏭ Пропустить', callback_data: 'skip_order_requirements' }],
         [{ text: '◀️ Назад', callback_data: 'order_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
       ]
     }
@@ -3467,7 +2582,7 @@ async function askOrderStep5(chatId, userId) {
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 6 Order - Срок актуальности (НОВЫЙ ШАГ)
+// Шаг 6 Order - Требования к исполнителю
 async function askOrderStep6(chatId, userId) {
   const userData = userStates[userId].data;
   let formText = '📋 *Твоя заявка:*\n\n';
@@ -3475,16 +2590,14 @@ async function askOrderStep6(chatId, userId) {
   if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
   if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
   if (userData.objectType) formText += `3️⃣ Тип объекта: ${userData.objectType}\n`;
-  if (userData.workType) formText += `4️⃣ Описание задачи: ${userData.workType.substring(0, 50)}...\n`;
-  if (userData.executorRequirements) formText += `5️⃣ Требования: ${userData.executorRequirements}\n`;
+  if (userData.workType) formText += `4️⃣ Работы: ${userData.workType}\n`;
+  if (userData.volumeTimeline) formText += `5️⃣ Объём и сроки: ${userData.volumeTimeline}\n`;
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}⏰ *Шаг 6 из 9* — Срок актуальности
+  const text = `${formText}👤 *Шаг 6 из 10* — Требования к исполнителю
 
-Сколько дней заявка актуальна? По истечению срока заявка скроется и откликов не будет.
-
-Напиши свой вариант или выбери из кнопок.`;
+_Опиши требования к исполнителю (опыт, квалификация и т.д.)_`;
 
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
     try {
@@ -3496,9 +2609,6 @@ async function askOrderStep6(chatId, userId) {
     parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [
-        [{ text: '7 дней', callback_data: 'ord_validity_7' }],
-        [{ text: '14 дней', callback_data: 'ord_validity_14' }],
-        [{ text: '30 дней', callback_data: 'ord_validity_30' }],
         [{ text: '◀️ Назад', callback_data: 'order_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
       ]
     }
@@ -3508,7 +2618,7 @@ async function askOrderStep6(chatId, userId) {
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 7 Order - Имя или название компании (НОВЫЙ ШАГ)
+// Шаг 7 Order - Условия оплаты
 async function askOrderStep7(chatId, userId) {
   const userData = userStates[userId].data;
   let formText = '📋 *Твоя заявка:*\n\n';
@@ -3516,19 +2626,15 @@ async function askOrderStep7(chatId, userId) {
   if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
   if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
   if (userData.objectType) formText += `3️⃣ Тип объекта: ${userData.objectType}\n`;
-  if (userData.workType) formText += `4️⃣ Задача: ${userData.workType}\n`;
-  if (userData.executorRequirements) formText += `5️⃣ Требования: ${userData.executorRequirements}\n`;
-  if (userData.validityPeriod) formText += `6️⃣ Срок актуальности: ${userData.validityPeriod}\n`;
+  if (userData.workType) formText += `4️⃣ Работы: ${userData.workType}\n`;
+  if (userData.volumeTimeline) formText += `5️⃣ Объём и сроки: ${userData.volumeTimeline}\n`;
+  if (userData.executorRequirements) formText += `6️⃣ Требования: ${userData.executorRequirements}\n`;
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}👤 *Шаг 7 из 9* — Имя или название компании
+  const text = `${formText}💰 *Шаг 7 из 10* — Условия оплаты
 
-Напиши имя или название компании —
-это будет видно специалистам.
-
-_Примеры:_
-_"Иван" или "ООО Стройпроект"_`;
+_Укажи условия оплаты для исполнителя_`;
 
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
     try {
@@ -3549,7 +2655,7 @@ _"Иван" или "ООО Стройпроект"_`;
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 8 Order - Контактный номер телефона
+// Шаг 8 Order - Формат сотрудничества
 async function askOrderStep8(chatId, userId) {
   const userData = userStates[userId].data;
   let formText = '📋 *Твоя заявка:*\n\n';
@@ -3557,14 +2663,58 @@ async function askOrderStep8(chatId, userId) {
   if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
   if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
   if (userData.objectType) formText += `3️⃣ Тип объекта: ${userData.objectType}\n`;
-  if (userData.workType) formText += `4️⃣ Задача: ${userData.workType}\n`;
-  if (userData.executorRequirements) formText += `5️⃣ Требования: ${userData.executorRequirements}\n`;
-  if (userData.validityPeriod) formText += `6️⃣ Срок актуальности: ${userData.validityPeriod}\n`;
-  if (userData.companyName) formText += `7️⃣ Компания: ${userData.companyName}\n`;
+  if (userData.workType) formText += `4️⃣ Работы: ${userData.workType}\n`;
+  if (userData.volumeTimeline) formText += `5️⃣ Объём и сроки: ${userData.volumeTimeline}\n`;
+  if (userData.executorRequirements) formText += `6️⃣ Требования: ${userData.executorRequirements}\n`;
+  if (userData.paymentConditions) formText += `7️⃣ Оплата: ${userData.paymentConditions}\n`;
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}📞 *Шаг 8 из 9* — Контактный номер телефона
+  const text = `${formText}🤝 *Шаг 8 из 10* — Формат сотрудничества
+
+_Выбери формат из кнопок или напиши свой вариант_`;
+
+  if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
+    try {
+      await safeDeleteMessage(chatId, liveMessages[userId].formStepMessageId);
+    } catch (error) {}
+  }
+
+  const msg = await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: 'Генподряд', callback_data: 'ord_coop_general' }],
+        [{ text: 'Субподряд', callback_data: 'ord_coop_sub' }],
+        [{ text: 'По сменам', callback_data: 'ord_coop_shifts' }],
+        [{ text: 'Разовый проект', callback_data: 'ord_coop_onetime' }],
+        [{ text: 'Долгосрочное сотрудничество', callback_data: 'ord_coop_longterm' }],
+        [{ text: '◀️ Назад', callback_data: 'order_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
+      ]
+    }
+  });
+
+  if (!liveMessages[userId]) liveMessages[userId] = {};
+  liveMessages[userId].formStepMessageId = msg.message_id;
+}
+
+// Шаг 9 Order - Контактный номер телефона
+async function askOrderStep9(chatId, userId) {
+  const userData = userStates[userId].data;
+  let formText = '📋 *Твоя заявка:*\n\n';
+
+  if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
+  if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
+  if (userData.objectType) formText += `3️⃣ Тип объекта: ${userData.objectType}\n`;
+  if (userData.workType) formText += `4️⃣ Работы: ${userData.workType}\n`;
+  if (userData.volumeTimeline) formText += `5️⃣ Объём и сроки: ${userData.volumeTimeline}\n`;
+  if (userData.executorRequirements) formText += `6️⃣ Требования: ${userData.executorRequirements}\n`;
+  if (userData.paymentConditions) formText += `7️⃣ Оплата: ${userData.paymentConditions}\n`;
+  if (userData.cooperationFormat) formText += `8️⃣ Формат: ${userData.cooperationFormat}\n`;
+
+  formText += '\n━━━━━━━━━━━━━━━\n\n';
+
+  const text = `${formText}📞 *Шаг 9 из 10* — Контактный номер телефона
 
 _Можешь отправить свой контакт кнопкой ниже или написать вручную 👇_`;
 
@@ -3590,23 +2740,24 @@ _Можешь отправить свой контакт кнопкой ниже
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 9 Order - Финальное согласование (проверка данных)
-async function askOrderStep9(chatId, userId) {
+// Шаг 10 Order - Финальное согласование (проверка данных)
+async function askOrderStep10(chatId, userId) {
   const userData = userStates[userId].data;
   let formText = '📋 *Твоя заявка:*\n\n';
 
   if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
   if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
   if (userData.objectType) formText += `3️⃣ Тип объекта: ${userData.objectType}\n`;
-  if (userData.workType) formText += `4️⃣ Задача: ${userData.workType}\n`;
-  if (userData.executorRequirements) formText += `5️⃣ Требования: ${userData.executorRequirements}\n`;
-  if (userData.validityPeriod) formText += `6️⃣ Срок актуальности: ${userData.validityPeriod}\n`;
-  if (userData.companyName) formText += `7️⃣ Компания: ${userData.companyName}\n`;
-  if (userData.contact) formText += `8️⃣ Контакт: ${userData.contact}\n`;
+  if (userData.workType) formText += `4️⃣ Работы: ${userData.workType}\n`;
+  if (userData.volumeTimeline) formText += `5️⃣ Объём и сроки: ${userData.volumeTimeline}\n`;
+  if (userData.executorRequirements) formText += `6️⃣ Требования: ${userData.executorRequirements}\n`;
+  if (userData.paymentConditions) formText += `7️⃣ Оплата: ${userData.paymentConditions}\n`;
+  if (userData.cooperationFormat) formText += `8️⃣ Формат: ${userData.cooperationFormat}\n`;
+  if (userData.contact) formText += `9️⃣ Контакт: ${userData.contact}\n`;
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}✅ *Шаг 9 из 9* — Финальное согласование
+  const text = `${formText}✅ *Шаг 10 из 10* — Финальное согласование
 
 *Проверьте правильность ввода данных.*
 
@@ -3633,17 +2784,301 @@ async function askOrderStep9(chatId, userId) {
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
+// ==================== ШАГИ ДЛЯ ВЕТКИ SUPPLIER (ПОСТАВЩИК) ====================
+
+// Шаг 1 Supplier - Тип поставщика
+async function askSupplierStep1(chatId, userId) {
+  const text = `📝 *Шаг 1 из 8* — Кто вы по формату?
+
+_Выбери из кнопок ниже_`;
+
+  if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
+    try {
+      await safeDeleteMessage(chatId, liveMessages[userId].formStepMessageId);
+    } catch (error) {}
+  }
+
+  const msg = await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: 'Производитель', callback_data: 'sup_type_manufacturer' }],
+        [{ text: 'Поставщик', callback_data: 'sup_type_supplier' }],
+        [{ text: 'Аренда техники / механизмов', callback_data: 'sup_type_rent' }],
+        [{ text: '❌ Отменить', callback_data: 'cancel_form' }]
+      ]
+    }
+  });
+
+  if (!liveMessages[userId]) liveMessages[userId] = {};
+  liveMessages[userId].formStepMessageId = msg.message_id;
+}
+
+// Шаг 2 Supplier - Что поставляете/сдаёте в аренду
+async function askSupplierStep2(chatId, userId) {
+  const userData = userStates[userId].data;
+  let formText = '📋 *Твоя анкета:*\n\n';
+
+  if (userData.supplierType) formText += `1️⃣ Формат: ${userData.supplierType}\n`;
+
+  formText += '\n━━━━━━━━━━━━━━━\n\n';
+
+  const text = `${formText}📦 *Шаг 2 из 8* — Что поставляете/сдаёте в аренду?
+
+_Опиши товары, материалы или технику_`;
+
+  if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
+    try {
+      await safeDeleteMessage(chatId, liveMessages[userId].formStepMessageId);
+    } catch (error) {}
+  }
+
+  const msg = await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '◀️ Назад', callback_data: 'supplier_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
+      ]
+    }
+  });
+
+  if (!liveMessages[userId]) liveMessages[userId] = {};
+  liveMessages[userId].formStepMessageId = msg.message_id;
+}
+
+// Шаг 3 Supplier - География работы
+async function askSupplierStep3(chatId, userId) {
+  const userData = userStates[userId].data;
+  let formText = '📋 *Твоя анкета:*\n\n';
+
+  if (userData.supplierType) formText += `1️⃣ Формат: ${userData.supplierType}\n`;
+  if (userData.productsServices) formText += `2️⃣ Что поставляете: ${userData.productsServices}\n`;
+
+  formText += '\n━━━━━━━━━━━━━━━\n\n';
+
+  const text = `${formText}🌍 *Шаг 3 из 8* — География работы
+
+_Выбери город из кнопок или напиши свой вариант_`;
+
+  if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
+    try {
+      await safeDeleteMessage(chatId, liveMessages[userId].formStepMessageId);
+    } catch (error) {}
+  }
+
+  const msg = await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: 'Москва', callback_data: 'sup_city_moscow' }],
+        [{ text: 'Санкт-Петербург', callback_data: 'sup_city_spb' }],
+        [{ text: '◀️ Назад', callback_data: 'supplier_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
+      ]
+    }
+  });
+
+  if (!liveMessages[userId]) liveMessages[userId] = {};
+  liveMessages[userId].formStepMessageId = msg.message_id;
+}
+
+// Шаг 4 Supplier - С кем работаете
+async function askSupplierStep4(chatId, userId) {
+  const userData = userStates[userId].data;
+  let formText = '📋 *Твоя анкета:*\n\n';
+
+  if (userData.supplierType) formText += `1️⃣ Формат: ${userData.supplierType}\n`;
+  if (userData.productsServices) formText += `2️⃣ Что поставляете: ${userData.productsServices}\n`;
+  if (userData.geography) formText += `3️⃣ География: ${userData.geography}\n`;
+
+  formText += '\n━━━━━━━━━━━━━━━\n\n';
+
+  const text = `${formText}👥 *Шаг 4 из 8* — С кем работаете?
+
+_Выбери целевую аудиторию из кнопок или напиши свой вариант_`;
+
+  if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
+    try {
+      await safeDeleteMessage(chatId, liveMessages[userId].formStepMessageId);
+    } catch (error) {}
+  }
+
+  const msg = await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: 'Частники', callback_data: 'sup_aud_private' }],
+        [{ text: 'Подрядчики', callback_data: 'sup_aud_contractors' }],
+        [{ text: 'Застройщики', callback_data: 'sup_aud_developers' }],
+        [{ text: 'Не важно (все)', callback_data: 'sup_aud_all' }],
+        [{ text: '◀️ Назад', callback_data: 'supplier_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
+      ]
+    }
+  });
+
+  if (!liveMessages[userId]) liveMessages[userId] = {};
+  liveMessages[userId].formStepMessageId = msg.message_id;
+}
+
+// Шаг 5 Supplier - Минимальный заказ и условия
+async function askSupplierStep5(chatId, userId) {
+  const userData = userStates[userId].data;
+  let formText = '📋 *Твоя анкета:*\n\n';
+
+  if (userData.supplierType) formText += `1️⃣ Формат: ${userData.supplierType}\n`;
+  if (userData.productsServices) formText += `2️⃣ Что поставляете: ${userData.productsServices}\n`;
+  if (userData.geography) formText += `3️⃣ География: ${userData.geography}\n`;
+  if (userData.targetAudience) formText += `4️⃣ Для кого: ${userData.targetAudience}\n`;
+
+  formText += '\n━━━━━━━━━━━━━━━\n\n';
+
+  const text = `${formText}📋 *Шаг 5 из 8* — Минимальный заказ и условия
+
+_Укажи минимальный заказ, условия поставки/аренды_`;
+
+  if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
+    try {
+      await safeDeleteMessage(chatId, liveMessages[userId].formStepMessageId);
+    } catch (error) {}
+  }
+
+  const msg = await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '◀️ Назад', callback_data: 'supplier_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
+      ]
+    }
+  });
+
+  if (!liveMessages[userId]) liveMessages[userId] = {};
+  liveMessages[userId].formStepMessageId = msg.message_id;
+}
+
+// Шаг 6 Supplier - Контактный номер телефона
+async function askSupplierStep6(chatId, userId) {
+  const userData = userStates[userId].data;
+  let formText = '📋 *Твоя анкета:*\n\n';
+
+  if (userData.supplierType) formText += `1️⃣ Формат: ${userData.supplierType}\n`;
+  if (userData.productsServices) formText += `2️⃣ Что поставляете: ${userData.productsServices}\n`;
+  if (userData.geography) formText += `3️⃣ География: ${userData.geography}\n`;
+  if (userData.targetAudience) formText += `4️⃣ Для кого: ${userData.targetAudience}\n`;
+  if (userData.minOrderConditions) formText += `5️⃣ Условия: ${userData.minOrderConditions}\n`;
+
+  formText += '\n━━━━━━━━━━━━━━━\n\n';
+
+  const text = `${formText}📞 *Шаг 6 из 8* — Контактный номер телефона
+
+_Можешь отправить свой контакт кнопкой ниже или написать вручную 👇_`;
+
+  if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
+    try {
+      await safeDeleteMessage(chatId, liveMessages[userId].formStepMessageId);
+    } catch (error) {}
+  }
+
+  const msg = await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      keyboard: [
+        [{ text: '📱 Поделиться контактом', request_contact: true }],
+        [{ text: '◀️ Назад' }, { text: '❌ Отменить заполнение' }]
+      ],
+      resize_keyboard: true,
+      one_time_keyboard: false
+    }
+  });
+
+  if (!liveMessages[userId]) liveMessages[userId] = {};
+  liveMessages[userId].formStepMessageId = msg.message_id;
+}
+
+// Шаг 7 Supplier - О компании
+async function askSupplierStep7(chatId, userId) {
+  const userData = userStates[userId].data;
+  let formText = '📋 *Твоя анкета:*\n\n';
+
+  if (userData.supplierType) formText += `1️⃣ Формат: ${userData.supplierType}\n`;
+  if (userData.productsServices) formText += `2️⃣ Что поставляете: ${userData.productsServices}\n`;
+  if (userData.geography) formText += `3️⃣ География: ${userData.geography}\n`;
+  if (userData.targetAudience) formText += `4️⃣ Для кого: ${userData.targetAudience}\n`;
+  if (userData.minOrderConditions) formText += `5️⃣ Условия: ${userData.minOrderConditions}\n`;
+  if (userData.contact) formText += `6️⃣ Контакт: ${userData.contact}\n`;
+
+  formText += '\n━━━━━━━━━━━━━━━\n\n';
+
+  const text = `${formText}🏢 *Шаг 7 из 8* — О компании
+
+_Название компании, имя контактного лица, ссылка на сайт_`;
+
+  if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
+    try {
+      await safeDeleteMessage(chatId, liveMessages[userId].formStepMessageId);
+    } catch (error) {}
+  }
+
+  const msg = await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '◀️ Назад', callback_data: 'supplier_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
+      ],
+      remove_keyboard: true
+    }
+  });
+
+  if (!liveMessages[userId]) liveMessages[userId] = {};
+  liveMessages[userId].formStepMessageId = msg.message_id;
+}
+
+// Шаг 8 Supplier - Финальное согласование (проверка данных)
+async function askSupplierStep8(chatId, userId) {
+  const userData = userStates[userId].data;
+  let formText = '📋 *Твоя анкета:*\n\n';
+
+  if (userData.supplierType) formText += `1️⃣ Формат: ${userData.supplierType}\n`;
+  if (userData.productsServices) formText += `2️⃣ Что поставляете: ${userData.productsServices}\n`;
+  if (userData.geography) formText += `3️⃣ География: ${userData.geography}\n`;
+  if (userData.targetAudience) formText += `4️⃣ Для кого: ${userData.targetAudience}\n`;
+  if (userData.minOrderConditions) formText += `5️⃣ Условия: ${userData.minOrderConditions}\n`;
+  if (userData.contact) formText += `6️⃣ Контакт: ${userData.contact}\n`;
+  if (userData.companyInfo) formText += `7️⃣ О компании: ${userData.companyInfo}\n`;
+
+  formText += '\n━━━━━━━━━━━━━━━\n\n';
+
+  const text = `${formText}✅ *Шаг 8 из 8* — Финальное согласование
+
+*Проверьте правильность ввода данных.*
+
+Если всё верно — нажми *"Подтвердить"*
+Если нужно исправить — нажми *"Назад"*`;
+
+  if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
+    try {
+      await safeDeleteMessage(chatId, liveMessages[userId].formStepMessageId);
+    } catch (error) {}
+  }
+
+  const msg = await bot.sendMessage(chatId, text, {
+    parse_mode: 'Markdown',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '✅ Подтвердить', callback_data: 'confirm_supplier_form' }],
+        [{ text: '◀️ Назад', callback_data: 'supplier_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
+      ]
+    }
+  });
+
+  if (!liveMessages[userId]) liveMessages[userId] = {};
+  liveMessages[userId].formStepMessageId = msg.message_id;
+}
+
 // ==================== ОБРАБОТКА СООБЩЕНИЙ ====================
 
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
   const text = msg.text;
-
-  // Игнорируем сообщения из каналов и групп - работаем только в личных чатах
-  if (msg.chat.type !== 'private') {
-    return;
-  }
 
   // Пропускаем команды
   if (text && text.startsWith('/')) return;
@@ -3653,18 +3088,17 @@ bot.on('message', async (msg) => {
     // Удаляем сообщение пользователя
     try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
 
-    // Проверяем валидацию ПЕРЕД удалением сообщения с просьбой
-    if (!text || text.trim().length < 10) {
-      const errorMsg = await bot.sendMessage(chatId, '❌ Жалоба слишком короткая. Опиши проблему подробнее (минимум 10 символов).');
-      deleteMessageAfterDelay(chatId, errorMsg.message_id);
-      return;
-    }
-
-    // Удаляем сообщение с просьбой написать жалобу только если валидация прошла
+    // Удаляем сообщение с просьбой написать жалобу
     if (complaintStates[userId].messageId) {
       try {
         await safeDeleteMessage(chatId, complaintStates[userId].messageId);
       } catch (e) {}
+    }
+
+    if (!text || text.trim().length < 10) {
+      const errorMsg = await bot.sendMessage(chatId, '❌ Жалоба слишком короткая. Опиши проблему подробнее (минимум 10 символов).');
+      deleteMessageAfterDelay(chatId, errorMsg.message_id);
+      return;
     }
 
     // Получаем telegram username
@@ -3750,201 +3184,6 @@ _${text.trim()}_
       await performSearch(chatId, userId);
       return;
     }
-
-    // Обработка быстрого поиска специалистов
-    if (state.type === 'search_contractors' && state.step === 'waiting_query') {
-      // Удаляем сообщение пользователя
-      try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
-
-      // Удаляем сообщение с запросом "Опиши, каких специалистов ты ищешь..."
-      if (state.promptMessageId) {
-        try {
-          await safeDeleteMessage(chatId, state.promptMessageId);
-        } catch (e) {}
-      }
-
-      let userQuery = text;
-
-      // Обработка голосового сообщения
-      if (msg.voice) {
-        const processingMsg = await bot.sendMessage(chatId, '🎤 Распознаю голосовое сообщение...');
-        userQuery = await recognizeVoice(msg.voice.file_id);
-        await safeDeleteMessage(chatId, processingMsg.message_id);
-
-        if (!userQuery) {
-          await bot.sendMessage(chatId, '❌ Не удалось распознать голос. Попробуй еще раз или напиши текстом.');
-          return;
-        }
-
-        await bot.sendMessage(chatId, `✅ Распознано: "${userQuery}"`);
-      }
-
-      // Показать сообщение "Анализирую запрос..."
-      const analyzingMsg = await bot.sendMessage(chatId, '🤖 Анализирую запрос и подбираю специалистов...');
-
-      // Определить категорию через AI
-      const category = await determineCategoryWithAI(userQuery, 'any');
-
-      // Удаляем сообщение "Анализирую..."
-      await safeDeleteMessage(chatId, analyzingMsg.message_id);
-
-      if (!category) {
-        // Категория не определена
-        const errorMsg = await bot.sendMessage(chatId, `❌ Не получилось понять, кого именно ты ищешь.
-Попробуй описать точнее.
-
-Например:
-✅ "Нужен плиточник"
-✅ "Ищу бригаду отделочников"
-✅ "Требуется электрик"
-
-❌ Не подходит:
-"Нужны строители"
-"Ищу рабочих"`);
-        // Автоудаление через 30 секунд
-        deleteMessageAfterDelay(chatId, errorMsg.message_id, 30000);
-        // Остаёмся на том же шаге
-        return;
-      }
-
-      // Категория определена - запускаем поиск
-      const { data: contractorsData, error: contractorsError } = await supabase
-        .from('contractors')
-        .select('*')
-        .eq('category', category)
-        .eq('status', 'approved')
-        .neq('telegram_id', userId)
-        .order('created_at', { ascending: false });
-
-      if (contractorsError || !contractorsData || contractorsData.length === 0) {
-        // Специалистов нет
-        const noResultsText = `По твоему запросу сейчас нет подходящих специалистов.
-
-Создай заявку —
-и специалисты сами свяжутся с тобой.`;
-
-        await bot.sendMessage(chatId, noResultsText, {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '🧾 Создать заявку', callback_data: 'create_order' }],
-              [{ text: '🏠 В меню', callback_data: 'main_menu' }]
-            ]
-          }
-        });
-
-        // Очищаем состояние поиска
-        delete searchStates[userId];
-        return;
-      }
-
-      // Специалисты найдены - показываем первую карточку
-      searchStates[userId] = {
-        type: 'contractors',
-        results: contractorsData
-      };
-
-      await showContractorCards(chatId, userId, 0);
-      return;
-    }
-
-    // Обработка быстрого поиска заявок (для специалистов)
-    if (state.type === 'search_orders' && state.step === 'waiting_query') {
-      // Удаляем сообщение пользователя
-      try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
-
-      // Удаляем сообщение с запросом "Опиши, какую работу ты ищешь..."
-      if (state.promptMessageId) {
-        try {
-          await safeDeleteMessage(chatId, state.promptMessageId);
-        } catch (e) {}
-      }
-
-      let userQuery = text;
-
-      // Обработка голосового сообщения
-      if (msg.voice) {
-        const processingMsg = await bot.sendMessage(chatId, '🎤 Распознаю голосовое сообщение...');
-        userQuery = await recognizeVoice(msg.voice.file_id);
-        await safeDeleteMessage(chatId, processingMsg.message_id);
-
-        if (!userQuery) {
-          await bot.sendMessage(chatId, '❌ Не удалось распознать голос. Попробуй еще раз или напиши текстом.');
-          return;
-        }
-
-        await bot.sendMessage(chatId, `✅ Распознано: "${userQuery}"`);
-      }
-
-      // Показать сообщение "Анализирую запрос..."
-      const analyzingMsg = await bot.sendMessage(chatId, '🤖 Анализирую запрос и подбираю заявки...');
-
-      // Определить категорию через AI
-      const category = await determineCategoryWithAI(userQuery, 'any');
-
-      // Удаляем сообщение "Анализирую..."
-      await safeDeleteMessage(chatId, analyzingMsg.message_id);
-
-      if (!category) {
-        // Категория не определена
-        const errorMsg = await bot.sendMessage(chatId, `❌ Не получилось понять, какую работу ты ищешь.
-Попробуй описать точнее.
-
-Например:
-✅ "Ищу работу плиточником"
-✅ "Нужна работа по отделке"
-✅ "Ищу заказы на электромонтаж"
-
-❌ Не подходит:
-"Нужна работа"
-"Ищу заказы"`);
-        // Автоудаление через 30 секунд
-        deleteMessageAfterDelay(chatId, errorMsg.message_id, 30000);
-        // Остаёмся на том же шаге
-        return;
-      }
-
-      // Категория определена - запускаем поиск
-      const { data: ordersData, error: ordersError } = await supabase
-        .from('orders')
-        .select('*')
-        .eq('category', category)
-        .eq('status', 'approved')
-        .neq('telegram_id', userId)
-        .or('expires_at.is.null,expires_at.gt.' + new Date().toISOString())
-        .order('created_at', { ascending: false });
-
-      if (ordersError || !ordersData || ordersData.length === 0) {
-        // Заявок нет
-        const noOrdersText = `По твоему запросу сейчас нет активных заявок.
-
-Это нормально — новые предложения появляются регулярно.
-
-Ты можешь создать анкету в сообществе,
-и заказчики смогут находить тебя напрямую.`;
-
-        await bot.sendMessage(chatId, noOrdersText, {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '📝 Создать анкету', callback_data: 'create_contractor_profile' }],
-              [{ text: '🏠 В меню', callback_data: 'main_menu' }]
-            ]
-          }
-        });
-
-        // Очищаем состояние поиска
-        delete searchStates[userId];
-        return;
-      }
-
-      // Заявки найдены - показываем первую карточку
-      searchStates[userId] = {
-        type: 'orders',
-        results: ordersData
-      };
-
-      await showOrderCards(chatId, userId, 0);
-      return;
-    }
   }
 
   // Проверяем, заполняет ли пользователь анкету
@@ -3953,13 +3192,17 @@ _${text.trim()}_
 
     // Обработка кнопки "Назад" (только для шагов с контактами)
     if (text === '◀️ Назад') {
-      if (state.formType === 'contractor' && state.step === 10) {
-        state.step = 9;
-        await askStep9(chatId, userId);
+      if (state.formType === 'contractor' && state.step === 9) {
+        state.step = 8;
+        await askStep8(chatId, userId);
         return;
-      } else if (state.formType === 'order' && state.step === 8) {
-        state.step = 7;
-        await askOrderStep7(chatId, userId);
+      } else if (state.formType === 'order' && state.step === 9) {
+        state.step = 8;
+        await askOrderStep8(chatId, userId);
+        return;
+      } else if (state.formType === 'supplier' && state.step === 6) {
+        state.step = 5;
+        await askSupplierStep5(chatId, userId);
         return;
       }
     }
@@ -3974,10 +3217,11 @@ _${text.trim()}_
 
     let responseText = text;
 
-    // Обработка контакта (contractor шаг 10, order шаг 8)
+    // Обработка контакта (contractor шаг 9, order шаг 9, supplier шаг 6)
     if (msg.contact && (
-      (state.formType === 'contractor' && state.step === 10) ||
-      (state.formType === 'order' && state.step === 8)
+      (state.formType === 'contractor' && state.step === 9) ||
+      (state.formType === 'order' && state.step === 9) ||
+      (state.formType === 'supplier' && state.step === 6)
     )) {
       const contact = msg.contact;
       // Убираем лишний плюс если он уже есть в номере
@@ -4042,45 +3286,6 @@ _${text.trim()}_
 
       let validation;
       switch (state.step) {
-        case 1: // Кого ищешь (свободный текстовый ввод)
-          validation = validateWorkType(responseText);
-          if (!validation.valid) {
-            const errMsg = await bot.sendMessage(chatId, validation.message);
-            deleteMessageAfterDelay(chatId, errMsg.message_id);
-            return;
-          }
-
-          // Этап 5: Определение категории через AI (для заявок используем все категории)
-          const orderCategoryMsg = await bot.sendMessage(chatId, '🤖 Определяю категорию...');
-          const orderCategory = await determineCategoryWithAI(responseText.trim(), 'any');
-
-          setTimeout(() => {
-            safeDeleteMessage(chatId, orderCategoryMsg.message_id).catch(() => {});
-          }, 2000);
-
-          // Если категория не определена - показываем ошибку и остаемся на том же шаге
-          if (!orderCategory) {
-            const orderErrorMsg = await bot.sendMessage(chatId, `❌ Не получилось определить кого ты ищешь.
-Попробуй написать точнее.
-
-Например:
-✅ "Плиточник"
-✅ "Бригада штукатуров"
-✅ "Монтажник вентиляции"
-
-❌ Не подходит:
-"Мастера"
-"Работники"`);
-            // НЕ переходим на следующий шаг, остаемся на шаге 1
-            return;
-          }
-
-          state.data.requestType = responseText.trim();
-          state.data.category = orderCategory; // Сохраняем категорию
-          state.step = 2;
-          await askOrderStep2(chatId, userId);
-          break;
-
         case 2: // Город и локация
           validation = validateCityLocation(responseText);
           if (!validation.valid) {
@@ -4105,7 +3310,7 @@ _${text.trim()}_
           await askOrderStep4(chatId, userId);
           break;
 
-        case 4: // Описание задачи (объединение старых шагов 4 и 5)
+        case 4: // Какие работы нужны
           validation = validateWorkType(responseText);
           if (!validation.valid) {
             const errMsg = await bot.sendMessage(chatId, validation.message);
@@ -4117,7 +3322,19 @@ _${text.trim()}_
           await askOrderStep5(chatId, userId);
           break;
 
-        case 5: // Требования к исполнителю (необязательно)
+        case 5: // Объём и сроки
+          validation = validateVolumeTimeline(responseText);
+          if (!validation.valid) {
+            const errMsg = await bot.sendMessage(chatId, validation.message);
+            deleteMessageAfterDelay(chatId, errMsg.message_id);
+            return;
+          }
+          state.data.volumeTimeline = responseText.trim();
+          state.step = 6;
+          await askOrderStep6(chatId, userId);
+          break;
+
+        case 6: // Требования к исполнителю
           validation = validateExecutorRequirements(responseText);
           if (!validation.valid) {
             const errMsg = await bot.sendMessage(chatId, validation.message);
@@ -4125,35 +3342,35 @@ _${text.trim()}_
             return;
           }
           state.data.executorRequirements = responseText.trim();
-          state.step = 6;
-          await askOrderStep6(chatId, userId);
+          state.step = 7;
+          await askOrderStep7(chatId, userId);
           break;
 
-        case 6: // Срок актуальности (свободный ввод или кнопки)
+        case 7: // Условия оплаты
+          validation = validatePaymentConditions(responseText);
+          if (!validation.valid) {
+            const errMsg = await bot.sendMessage(chatId, validation.message);
+            deleteMessageAfterDelay(chatId, errMsg.message_id);
+            return;
+          }
+          state.data.paymentConditions = responseText.trim();
+          state.step = 8;
+          await askOrderStep8(chatId, userId);
+          break;
+
+        case 8: // Формат сотрудничества (свободный ввод)
           validation = validateCityLocation(responseText); // Базовая валидация
           if (!validation.valid) {
             const errMsg = await bot.sendMessage(chatId, validation.message);
             deleteMessageAfterDelay(chatId, errMsg.message_id);
             return;
           }
-          state.data.validityPeriod = responseText.trim();
-          state.step = 7;
-          await askOrderStep7(chatId, userId);
+          state.data.cooperationFormat = responseText.trim();
+          state.step = 9;
+          await askOrderStep9(chatId, userId);
           break;
 
-        case 7: // Имя или название компании
-          validation = validateCompanyName(responseText);
-          if (!validation.valid) {
-            const errMsg = await bot.sendMessage(chatId, validation.message);
-            deleteMessageAfterDelay(chatId, errMsg.message_id);
-            return;
-          }
-          state.data.companyName = responseText.trim();
-          state.step = 8;
-          await askOrderStep8(chatId, userId);
-          break;
-
-        case 8: // Контактный телефон
+        case 9: // Контактный телефон
           validation = validatePhoneNumber(responseText);
           if (!validation.valid) {
             const errMsg = await bot.sendMessage(chatId, validation.message);
@@ -4167,8 +3384,8 @@ _${text.trim()}_
           state.data.telegramTag = telegramUsername ? `@${telegramUsername}` : null;
 
           // Переходим на финальное согласование
-          state.step = 9;
-          await askOrderStep9(chatId, userId);
+          state.step = 10;
+          await askOrderStep10(chatId, userId);
           break;
 
         default:
@@ -4177,12 +3394,119 @@ _${text.trim()}_
       return;
     }
 
-    // ========== ОБРАБОТКА CONTRACTOR ФОРМЫ ==========
+    // ========== ОБРАБОТКА SUPPLIER ФОРМЫ ==========
+    if (state.formType === 'supplier') {
+      // Удаляем сообщение пользователя
+      try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
+
+      let validation;
+      switch (state.step) {
+        case 2: // Что поставляете
+          validation = validateProductsServices(responseText);
+          if (!validation.valid) {
+            const errMsg = await bot.sendMessage(chatId, validation.message);
+            deleteMessageAfterDelay(chatId, errMsg.message_id);
+            return;
+          }
+          state.data.productsServices = responseText.trim();
+          state.step = 3;
+          await askSupplierStep3(chatId, userId);
+          break;
+
+        case 3: // География (свободный ввод)
+          validation = validateGeography(responseText);
+          if (!validation.valid) {
+            const errMsg = await bot.sendMessage(chatId, validation.message);
+            deleteMessageAfterDelay(chatId, errMsg.message_id);
+            return;
+          }
+          state.data.geography = responseText.trim();
+          state.step = 4;
+          await askSupplierStep4(chatId, userId);
+          break;
+
+        case 4: // Целевая аудитория (свободный ввод)
+          validation = validateGeography(responseText); // Базовая валидация
+          if (!validation.valid) {
+            const errMsg = await bot.sendMessage(chatId, validation.message);
+            deleteMessageAfterDelay(chatId, errMsg.message_id);
+            return;
+          }
+          state.data.targetAudience = responseText.trim();
+          state.step = 5;
+          await askSupplierStep5(chatId, userId);
+          break;
+
+        case 5: // Минимальный заказ и условия
+          validation = validateMinOrderConditions(responseText);
+          if (!validation.valid) {
+            const errMsg = await bot.sendMessage(chatId, validation.message);
+            deleteMessageAfterDelay(chatId, errMsg.message_id);
+            return;
+          }
+          state.data.minOrderConditions = responseText.trim();
+          state.step = 6;
+          await askSupplierStep6(chatId, userId);
+          break;
+
+        case 6: // Контактный телефон
+          validation = validatePhoneNumber(responseText);
+          if (!validation.valid) {
+            const errMsg = await bot.sendMessage(chatId, validation.message);
+            deleteMessageAfterDelay(chatId, errMsg.message_id);
+            return;
+          }
+          state.data.contact = responseText.trim();
+          state.step = 7;
+          await askSupplierStep7(chatId, userId);
+          break;
+
+        case 7: // О компании
+          validation = validateCompanyInfo(responseText);
+          if (!validation.valid) {
+            const errMsg = await bot.sendMessage(chatId, validation.message);
+            deleteMessageAfterDelay(chatId, errMsg.message_id);
+            return;
+          }
+          state.data.companyInfo = responseText.trim();
+
+          // Автоматически сохраняем telegram username
+          const telegramUsername = msg.from.username;
+          state.data.telegramTag = telegramUsername ? `@${telegramUsername}` : null;
+
+          // Переходим на финальное согласование
+          state.step = 8;
+          await askSupplierStep8(chatId, userId);
+          break;
+
+        default:
+          break;
+      }
+      return;
+    }
+
+    // ========== ОБРАБОТКА CONTRACTOR ФОРМЫ (по умолчанию) ==========
     // Валидация и сохранение данных по шагам
     let validation;
     switch (state.step) {
-      case 1: // Формат работы
+      case 1:
         validation = validateWorkFormat(responseText);
+        if (!validation.valid) {
+          const errMsg = await bot.sendMessage(chatId, validation.message);
+          deleteMessageAfterDelay(chatId, errMsg.message_id);
+          // Удаляем сообщение пользователя
+          try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
+          return;
+        }
+        // Удаляем сообщение пользователя после успешной валидации
+        try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
+        state.data.workFormat = responseText.trim();
+        state.step = 2;
+        await askStep2(chatId, userId);
+        break;
+
+      case 2:
+        validation = validateCity(responseText);
         if (!validation.valid) {
           const errMsg = await bot.sendMessage(chatId, validation.message);
           deleteMessageAfterDelay(chatId, errMsg.message_id);
@@ -4190,12 +3514,12 @@ _${text.trim()}_
           return;
         }
         try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
-        state.data.workFormat = responseText.trim();
-        state.step = 2;
-        await askStep2(chatId, userId);
+        state.data.city = responseText.trim();
+        state.step = 3;
+        await askStep3(chatId, userId);
         break;
 
-      case 2: // Специализация (было шаг 3)
+      case 3:
         validation = validateSpecialization(responseText);
         if (!validation.valid) {
           const errMsg = await bot.sendMessage(chatId, validation.message);
@@ -4211,81 +3535,29 @@ _${text.trim()}_
           const processingMsg = await bot.sendMessage(chatId, '🤖 Обрабатываю текст...');
           processedSpecialization = await processTextWithDeepseek(responseText.trim(), 'specialization');
 
+          // Удаляем сообщение "Обрабатываю текст..." через 3 секунды
           setTimeout(() => {
             safeDeleteMessage(chatId, processingMsg.message_id).catch(() => {});
           }, 3000);
 
+          // Показываем пользователю обработанный текст
           if (processedSpecialization !== responseText.trim()) {
             const resultMsg = await bot.sendMessage(chatId, `✨ Текст обработан:\n"${processedSpecialization}"`);
+
+            // Удаляем сообщение "Текст обработан..." через 3 секунды
             setTimeout(() => {
               safeDeleteMessage(chatId, resultMsg.message_id).catch(() => {});
             }, 3000);
           }
         }
 
-        // Этап 5: Определение категории через AI
-        const categoryMsg = await bot.sendMessage(chatId, '🤖 Определяю категорию...');
-        const category = await determineCategoryWithAI(processedSpecialization, state.data.workFormat);
-
-        setTimeout(() => {
-          safeDeleteMessage(chatId, categoryMsg.message_id).catch(() => {});
-        }, 2000);
-
-        // Если категория не определена - показываем ошибку и остаемся на том же шаге
-        if (!category) {
-          try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
-          const errorMsg = await bot.sendMessage(chatId, `❌ Не получилось определить твою специализацию.
-Попробуй написать точнее.
-
-Например:
-✅ "Укладываю плитку"
-✅ "Монтаж вентиляции"
-✅ "Отделка квартир под ключ"
-
-❌ Не подходит:
-"Делаю всё"
-"Работаю в стройке"`);
-          // Автоудаление через 30 секунд
-          deleteMessageAfterDelay(chatId, errorMsg.message_id, 30000);
-          // НЕ переходим на следующий шаг, остаемся на шаге 2
-          return;
-        }
-
         try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
         state.data.specialization = processedSpecialization;
-        state.data.category = category; // Сохраняем категорию
-        state.step = 3;
-        await askStep3(chatId, userId);
-        break;
-
-      case 3: // Город (было шаг 2)
-        validation = validateCity(responseText);
-        if (!validation.valid) {
-          const errMsg = await bot.sendMessage(chatId, validation.message);
-          deleteMessageAfterDelay(chatId, errMsg.message_id);
-          try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
-          return;
-        }
-        try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
-        state.data.city = responseText.trim();
         state.step = 4;
         await askStep4(chatId, userId);
         break;
 
-      case 4: // Имя (НОВОЕ)
-        if (!responseText || responseText.trim().length < 2) {
-          const errMsg = await bot.sendMessage(chatId, '❌ Имя слишком короткое. Введи минимум 2 символа.');
-          deleteMessageAfterDelay(chatId, errMsg.message_id);
-          try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
-          return;
-        }
-        try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
-        state.data.name = responseText.trim();
-        state.step = 5;
-        await askStep5(chatId, userId);
-        break;
-
-      case 5: // Опыт работы (было шаг 4)
+      case 4:
         validation = validateExperience(responseText);
         if (!validation.valid) {
           const errMsg = await bot.sendMessage(chatId, validation.message);
@@ -4295,11 +3567,11 @@ _${text.trim()}_
         }
         try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
         state.data.experience = responseText.trim();
-        state.step = 6;
-        await askStep6(chatId, userId);
+        state.step = 5;
+        await askStep5(chatId, userId);
         break;
 
-      case 6: // На каких объектах работали (было шаг 5)
+      case 5:
         validation = validateObjectsWorked(responseText);
         if (!validation.valid) {
           const errMsg = await bot.sendMessage(chatId, validation.message);
@@ -4309,18 +3581,25 @@ _${text.trim()}_
         }
         try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
         state.data.objectsWorked = responseText.trim();
+        state.step = 6;
+        await askStep6(chatId, userId);
+        break;
+
+      case 6:
+        validation = validateWorkVolume(responseText);
+        if (!validation.valid) {
+          const errMsg = await bot.sendMessage(chatId, validation.message);
+          deleteMessageAfterDelay(chatId, errMsg.message_id);
+          try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
+          return;
+        }
+        try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
+        state.data.workVolume = responseText.trim();
         state.step = 7;
         await askStep7(chatId, userId);
         break;
 
-      case 7: // Профессиональные преимущества (НОВОЕ, необязательное)
-        try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
-        state.data.professionalAdvantages = responseText.trim();
-        state.step = 8;
-        await askStep8(chatId, userId);
-        break;
-
-      case 8: // Формат сотрудничества (было шаг 7, documentsForm)
+      case 7:
         validation = validateDocumentsForm(responseText);
         if (!validation.valid) {
           const errMsg = await bot.sendMessage(chatId, validation.message);
@@ -4329,12 +3608,12 @@ _${text.trim()}_
           return;
         }
         try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
-        state.data.cooperationFormat = responseText.trim();
-        state.step = 9;
-        await askStep9(chatId, userId);
+        state.data.documentsForm = responseText.trim();
+        state.step = 8;
+        await askStep8(chatId, userId);
         break;
 
-      case 9: // Условия оплаты (было шаг 8)
+      case 8:
         validation = validatePaymentConditions(responseText);
         if (!validation.valid) {
           const errMsg = await bot.sendMessage(chatId, validation.message);
@@ -4344,11 +3623,11 @@ _${text.trim()}_
         }
         try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
         state.data.paymentConditions = responseText.trim();
-        state.step = 10;
-        await askStep10(chatId, userId);
+        state.step = 9;
+        await askStep9(chatId, userId);
         break;
 
-      case 10: // Контакты (было шаг 9)
+      case 9:
         validation = validatePhoneNumber(responseText);
         if (!validation.valid) {
           const errMsg = await bot.sendMessage(chatId, validation.message);
@@ -4358,25 +3637,28 @@ _${text.trim()}_
         }
         try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
         state.data.contact = responseText.trim();
-        state.step = 11;
-        await askStep11(chatId, userId);
+        state.step = 10;
+        await askStep10(chatId, userId);
         break;
 
-      case 11: // Фото (было шаг 10)
+      case 10:
+        // На шаге 10 принимаем только фото
         if (msg.photo && msg.photo.length > 0) {
+          // Берем фото наибольшего размера (последнее в массиве)
           const photo = msg.photo[msg.photo.length - 1];
           state.data.photoUrl = photo.file_id;
 
+          // Удаляем сообщение пользователя
           try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
 
           const confirmMsg = await bot.sendMessage(chatId, '✅ Фото добавлено!');
           deleteMessageAfterDelay(chatId, confirmMsg.message_id);
 
-          // Больше нет шага 12, поэтому сразу завершаем
-          const telegramUsername = msg.from.username;
-          await finishForm(chatId, userId, telegramUsername);
+          state.step = 11;
+          await askStep11(chatId, userId);
         } else {
-          const errMsg = await bot.sendMessage(chatId, '❌ Пожалуйста, отправь фотографию или нажми кнопку "Подтвердить и завершить"');
+          // Если пользователь отправил не фото, а текст или другой тип файла
+          const errMsg = await bot.sendMessage(chatId, '❌ Пожалуйста, отправь фотографию или нажми кнопку "Пропустить"');
           deleteMessageAfterDelay(chatId, errMsg.message_id);
           try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
         }
