@@ -632,35 +632,37 @@ function formatCurrentFormData(userData, currentStep) {
   if (userData.workFormat) {
     formText += `1️⃣ Формат работы: ${userData.workFormat}\n`;
   }
-  if (userData.city) {
-    formText += `2️⃣ Город: ${userData.city}\n`;
-  }
   if (userData.specialization) {
-    formText += `3️⃣ Специализация: ${userData.specialization}\n`;
+    formText += `2️⃣ Специализация: ${userData.specialization}\n`;
+  }
+  if (userData.city) {
+    formText += `3️⃣ Город: ${userData.city}\n`;
+  }
+  if (userData.name) {
+    formText += `4️⃣ Имя: ${userData.name}\n`;
   }
   if (userData.experience) {
-    formText += `4️⃣ Опыт: ${userData.experience}\n`;
+    formText += `5️⃣ Опыт: ${userData.experience}\n`;
   }
   if (userData.objectsWorked) {
-    formText += `5️⃣ Объекты: ${userData.objectsWorked}\n`;
+    formText += `6️⃣ Объекты: ${userData.objectsWorked}\n`;
   }
-  if (userData.workVolume) {
-    formText += `6️⃣ Объём работ: ${userData.workVolume}\n`;
+  if (userData.professionalAdvantages) {
+    formText += `7️⃣ Преимущества: ${userData.professionalAdvantages}\n`;
   }
-  if (userData.documentsForm) {
-    formText += `7️⃣ Документы: ${userData.documentsForm}\n`;
+  if (userData.cooperationFormat) {
+    formText += `8️⃣ Формат сотрудничества: ${userData.cooperationFormat}\n`;
   }
   if (userData.paymentConditions) {
-    formText += `8️⃣ Условия оплаты: ${userData.paymentConditions}\n`;
+    formText += `9️⃣ Условия оплаты: ${userData.paymentConditions}\n`;
   }
   if (userData.contact) {
-    formText += `9️⃣ Контакт: ${userData.contact}\n`;
+    formText += `🔟 Контакт: ${userData.contact}\n`;
   }
-  if (currentStep >= 10) {
-    if (userData.photoUrl) {
-      formText += `🔟 Фото: добавлено\n`;
-    } else if (userData.photoUrl === null) {
-      formText += `🔟 Фото: нет фото\n`;
+  if (currentStep >= 11) {
+    const portfolioCount = userData.portfolio ? userData.portfolio.length : 0;
+    if (portfolioCount > 0) {
+      formText += `1️⃣1️⃣ Портфолио: ${portfolioCount} фото\n`;
     }
   }
 
@@ -830,7 +832,8 @@ async function saveContractorToDatabase(data) {
           cooperation_format: data.cooperationFormat, // этап 3: переименовано из documents_form
           payment_conditions: data.paymentConditions,
           contact: data.contact,
-          photo_url: data.photoUrl,
+          photo_url: data.photoUrl || null,
+          portfolio_photos: data.portfolio || [], // Сохраняем весь массив фотографий портфолио
           telegram_tag: data.telegramTag,
           category: data.category || null, // этап 5: AI-определенная категория
           role: data.role || null, // этап 2: сохраняем роль
@@ -1660,15 +1663,10 @@ bot.on('callback_query', async (query) => {
 
   // Ищу работу - выбор между быстрым поиском и созданием анкеты
   if (data === 'search_work') {
-    // Удаляем меню
-    if (liveMessages[chatId] && liveMessages[chatId].menuMessageId) {
-      try {
-        await safeDeleteMessage(chatId, liveMessages[chatId].menuMessageId);
-      } catch (error) {
-        console.log('Меню уже удалено');
-      }
-    }
     await bot.answerCallbackQuery(query.id);
+
+    // Удаляем меню
+    await safeDeleteMessage(chatId, query.message.message_id);
 
     const menuText = `Как ты хочешь искать работу?
 
@@ -1771,32 +1769,31 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    // Анкета есть - показываем форму поиска
-    const searchText = `Опиши, какую работу ты ищешь.
+    // Анкета есть - показываем выбор города (Шаг 1)
+    const cityText = `📍 Шаг 1 из 2 — Город
 
-Можно:
-— написать текстом
-— или отправить голосовое сообщение
+В каком городе ищешь работу?
 
-Я подберу подходящие заявки из Базы по твоему запросу.
+_Выбери из кнопок или напиши свой город_`;
 
-Пример:
-«Ищу работу по укладке плитки в Москве»`;
-
-    const searchPromptMsg = await bot.sendMessage(chatId, searchText, {
+    const cityPromptMsg = await bot.sendMessage(chatId, cityText, {
+      parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
+          [{ text: 'Москва', callback_data: 'quick_search_city_Москва' }],
+          [{ text: 'Санкт-Петербург', callback_data: 'quick_search_city_Санкт-Петербург' }],
+          [{ text: 'Любой город', callback_data: 'quick_search_city_Любой город' }],
           [{ text: '◀️ Назад', callback_data: 'search_work' }],
           [{ text: '🏠 В меню', callback_data: 'main_menu' }]
         ]
       }
     });
 
-    // Инициализируем состояние поиска и сохраняем ID сообщения для удаления
+    // Инициализируем состояние поиска (Шаг 1: ожидание города)
     searchStates[userId] = {
       type: 'search_orders',
-      step: 'waiting_query',
-      promptMessageId: searchPromptMsg.message_id
+      step: 'waiting_city',
+      promptMessageId: cityPromptMsg.message_id
     };
 
     return;
@@ -1838,17 +1835,54 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
+  // Обработка выбора города в быстром поиске работы
+  if (data.startsWith('quick_search_city_')) {
+    const selectedCity = data.replace('quick_search_city_', '');
+    await bot.answerCallbackQuery(query.id);
+    await safeDeleteMessage(chatId, query.message.message_id);
+
+    // Сохраняем выбранный город и переходим к шагу 2
+    if (!searchStates[userId]) {
+      searchStates[userId] = {};
+    }
+
+    searchStates[userId].city = selectedCity;
+    searchStates[userId].type = 'search_orders';
+    searchStates[userId].step = 'waiting_query';
+
+    // Показываем форму описания работы (Шаг 2)
+    const searchText = `🔍 Шаг 2 из 2 — Описание работы
+
+Опиши, какую работу ты ищешь.
+
+Можно:
+— написать текстом
+— или отправить голосовое сообщение
+
+Я подберу подходящие заявки из Базы по твоему запросу.
+
+Пример:
+«Ищу работу по укладке плитки»`;
+
+    const searchPromptMsg = await bot.sendMessage(chatId, searchText, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '◀️ Назад', callback_data: 'quick_search_work' }],
+          [{ text: '🏠 В меню', callback_data: 'main_menu' }]
+        ]
+      }
+    });
+
+    searchStates[userId].promptMessageId = searchPromptMsg.message_id;
+    return;
+  }
+
   // Ищу людей - выбор между быстрым поиском и созданием заявки
   if (data === 'search_people') {
-    // Удаляем меню
-    if (liveMessages[chatId] && liveMessages[chatId].menuMessageId) {
-      try {
-        await safeDeleteMessage(chatId, liveMessages[chatId].menuMessageId);
-      } catch (error) {
-        console.log('Меню уже удалено');
-      }
-    }
     await bot.answerCallbackQuery(query.id);
+
+    // Удаляем меню
+    await safeDeleteMessage(chatId, query.message.message_id);
 
     const menuText = `Как ты хочешь найти специалистов?
 
@@ -2123,14 +2157,18 @@ bot.on('callback_query', async (query) => {
     const statusText = contractor.status === 'approved' ? '✅ Опубликована' :
                        (contractor.status === 'pending' ? '⏳ На модерации' : '❌ Отклонена');
 
-    await bot.sendMessage(chatId, `<b>Статус:</b> ${statusText}\n\n${cardText}`, {
+    const fullText = `<b>Статус:</b> ${statusText}\n\n${cardText}`;
+    const buttons = [
+      [{ text: '🗑 Удалить анкету', callback_data: `delete_contractor_${contractorId}` }],
+      [{ text: '◀️ Назад', callback_data: 'view_my_contractors' }],
+      [{ text: '🏠 В меню', callback_data: 'main_menu' }]
+    ];
+
+    // Отправляем только текст анкеты с кнопками (фото не отображаются)
+    await bot.sendMessage(chatId, fullText, {
       parse_mode: 'HTML',
       reply_markup: {
-        inline_keyboard: [
-          [{ text: '🗑 Удалить анкету', callback_data: `delete_contractor_${contractorId}` }],
-          [{ text: '◀️ Назад', callback_data: 'view_my_contractors' }],
-          [{ text: '🏠 В меню', callback_data: 'main_menu' }]
-        ]
+        inline_keyboard: buttons
       }
     });
     return;
@@ -2276,15 +2314,10 @@ bot.on('callback_query', async (query) => {
   }
 
   if (data === 'send_complaint') {
-    // Удаляем меню
-    if (liveMessages[chatId] && liveMessages[chatId].menuMessageId) {
-      try {
-        await safeDeleteMessage(chatId, liveMessages[chatId].menuMessageId);
-      } catch (error) {
-        console.log('Меню уже удалено');
-      }
-    }
     await bot.answerCallbackQuery(query.id);
+
+    // Удаляем меню
+    await safeDeleteMessage(chatId, query.message.message_id);
 
     // Инициализируем состояние жалобы
     complaintStates[userId] = { active: true };
@@ -2483,24 +2516,10 @@ async function showSearchResults(chatId, userId, offset) {
 
   // Отправляем карточки подрядчиков
   for (const contractor of contractors) {
-    // Отправляем фото профиля, если оно есть
-    if (contractor.photo_url) {
-      try {
-        await bot.sendPhoto(chatId, contractor.photo_url, {
-          caption: formatContractorCard(contractor),
-          parse_mode: 'Markdown'
-        });
-      } catch (error) {
-        console.error('Ошибка отправки фото:', error);
-        // Если фото не удалось отправить, отправляем только текст
-        const card = formatContractorCard(contractor);
-        await bot.sendMessage(chatId, card, { parse_mode: 'Markdown' });
-      }
-    } else {
-      // Если фото нет, отправляем только текстовую карточку
-      const card = formatContractorCard(contractor);
-      await bot.sendMessage(chatId, card, { parse_mode: 'Markdown' });
-    }
+    const cardText = formatContractorCard(contractor);
+
+    // Отправляем только текст анкеты (фото не отображаются)
+    await bot.sendMessage(chatId, cardText, { parse_mode: 'Markdown' });
   }
 
   // Кнопки навигации
@@ -2690,37 +2709,13 @@ async function showContractorCards(chatId, userId, currentIndex) {
   // Кнопка в меню
   buttons.push([{ text: '🏠 В меню', callback_data: 'main_menu' }]);
 
-  // Если есть портфолио (фото), отправляем с фото
-  if (currentContractor.portfolio && currentContractor.portfolio.length > 0) {
-    try {
-      // Берем первое фото из портфолио
-      const firstPhoto = currentContractor.portfolio[0];
-      await bot.sendPhoto(chatId, firstPhoto, {
-        caption: cardText,
-        parse_mode: 'HTML',
-        reply_markup: {
-          inline_keyboard: buttons
-        }
-      });
-    } catch (error) {
-      console.error('Ошибка отправки фото портфолио:', error);
-      // Если не удалось отправить фото, отправляем только текст
-      await bot.sendMessage(chatId, cardText, {
-        parse_mode: 'HTML',
-        reply_markup: {
-          inline_keyboard: buttons
-        }
-      });
+  // Отправляем только текст анкеты с кнопками (фото не отображаются)
+  await bot.sendMessage(chatId, cardText, {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: buttons
     }
-  } else {
-    // Если нет портфолио, отправляем только текст
-    await bot.sendMessage(chatId, cardText, {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: buttons
-      }
-    });
-  }
+  });
 }
 
 // ==================== ПРОЦЕСС АНКЕТЫ ====================
@@ -3134,13 +3129,16 @@ async function askStep11(chatId, userId) {
   const userData = userStates[userId].data;
   const formData = formatCurrentFormData(userData, 11);
 
-  const text = `${formData}📷 *Шаг 11 из 11* — Фотография профиля
+  const text = `${formData}📷 *Шаг 11 из 11* — Портфолио
 
-Добавь свою фотографию, чтобы привлечь больше работодателей!
+Добавь фото своих работ, чтобы привлечь больше заказчиков!
 
-Анкеты с фото получают *в 3 раза больше откликов*.
+Анкеты с портфолио получают *в 3 раза больше откликов*.
 
-Отправь фото или нажми "Подтвердить и завершить" 👇`;
+Можешь отправить несколько фото (до 5 штук).
+После каждого фото будет появляться кнопка для завершения.
+
+Отправь фото или нажми "Завершить без фото" 👇`;
 
   // Удаляем предыдущее сообщение шага если оно есть
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
@@ -3151,12 +3149,22 @@ async function askStep11(chatId, userId) {
     }
   }
 
+  // Инициализируем массив портфолио если его нет
+  if (!userData.portfolio) {
+    userData.portfolio = [];
+  }
+
+  const portfolioCount = userData.portfolio.length;
+  const buttonText = portfolioCount > 0
+    ? `✅ Завершить (${portfolioCount} фото)`
+    : '✅ Завершить без фото';
+
   // Отправляем основное сообщение с инлайн-кнопками
   const msg = await bot.sendMessage(chatId, text, {
     parse_mode: 'Markdown',
     reply_markup: {
       inline_keyboard: [
-        [{ text: '✅ Подтвердить и завершить', callback_data: 'confirm_form' }],
+        [{ text: buttonText, callback_data: 'confirm_form' }],
         [{ text: '◀️ Назад', callback_data: 'form_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
       ],
       remove_keyboard: true
@@ -3187,7 +3195,8 @@ async function finishForm(chatId, userId, telegramUsername) {
     cooperationFormat: userData.data.cooperationFormat, // этап 3: переименовано
     paymentConditions: userData.data.paymentConditions,
     contact: userData.data.contact,
-    photoUrl: userData.data.photoUrl,
+    photoUrl: (userData.data.portfolio && userData.data.portfolio.length > 0) ? userData.data.portfolio[0] : null, // Первое фото из портфолио (для обратной совместимости)
+    portfolio: userData.data.portfolio || [], // Весь массив фотографий портфолио
     telegramTag: telegramUsername ? `@${telegramUsername}` : null,
     category: userData.data.category || null, // этап 5: AI-определенная категория
     role: userData.selectedRole || null // этап 2: передаем роль из userStates
@@ -3847,7 +3856,50 @@ _${text.trim()}_
       return;
     }
 
-    // Обработка быстрого поиска заявок (для специалистов)
+    // Обработка ввода города в быстром поиске заявок (Шаг 1)
+    if (state.type === 'search_orders' && state.step === 'waiting_city') {
+      // Удаляем сообщение пользователя
+      try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
+
+      // Удаляем сообщение с вопросом о городе
+      if (state.promptMessageId) {
+        try {
+          await safeDeleteMessage(chatId, state.promptMessageId);
+        } catch (e) {}
+      }
+
+      // Сохраняем город и переходим к шагу 2
+      state.city = text.trim();
+      state.step = 'waiting_query';
+
+      // Показываем форму описания работы (Шаг 2)
+      const searchText = `🔍 Шаг 2 из 2 — Описание работы
+
+Опиши, какую работу ты ищешь.
+
+Можно:
+— написать текстом
+— или отправить голосовое сообщение
+
+Я подберу подходящие заявки из Базы по твоему запросу.
+
+Пример:
+«Ищу работу по укладке плитки»`;
+
+      const searchPromptMsg = await bot.sendMessage(chatId, searchText, {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '◀️ Назад', callback_data: 'quick_search_work' }],
+            [{ text: '🏠 В меню', callback_data: 'main_menu' }]
+          ]
+        }
+      });
+
+      state.promptMessageId = searchPromptMsg.message_id;
+      return;
+    }
+
+    // Обработка быстрого поиска заявок (для специалистов) - Шаг 2
     if (state.type === 'search_orders' && state.step === 'waiting_query') {
       // Удаляем сообщение пользователя
       try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
@@ -3903,15 +3955,28 @@ _${text.trim()}_
         return;
       }
 
-      // Категория определена - запускаем поиск
-      const { data: ordersData, error: ordersError } = await supabase
+      // Категория определена - запускаем поиск с фильтрацией по городу
+      const selectedCity = state.city; // Город, выбранный пользователем
+
+      let query = supabase
         .from('orders')
         .select('*')
         .eq('category', category)
         .eq('status', 'approved')
         .neq('telegram_id', userId)
-        .or('expires_at.is.null,expires_at.gt.' + new Date().toISOString())
-        .order('created_at', { ascending: false });
+        .or('expires_at.is.null,expires_at.gt.' + new Date().toISOString());
+
+      // Фильтр по городу
+      if (selectedCity && selectedCity !== 'Любой город') {
+        // Если выбран конкретный город - ищем заявки:
+        // 1. С этим городом
+        // 2. С "Любой город"
+        // Примечание: поле ready_for_trips не применимо к orders, только к contractors
+        query = query.or(`city_location.ilike.%${selectedCity}%,city_location.ilike.%Любой город%`);
+      }
+      // Если выбран "Любой город" - показываем все заявки (без фильтра)
+
+      const { data: ordersData, error: ordersError } = await query.order('created_at', { ascending: false });
 
       if (ordersError || !ordersData || ordersData.length === 0) {
         // Заявок нет
@@ -4029,8 +4094,8 @@ _${text.trim()}_
       }
     }
 
-    // Проверка на пустой ответ (не применяется к шагу 10 - фото)
-    if ((!responseText || responseText.trim() === '') && state.step !== 10) {
+    // Проверка на пустой ответ (не применяется к шагу 11 - фото)
+    if ((!responseText || responseText.trim() === '') && state.step !== 11) {
       await bot.sendMessage(chatId, '❌ Пожалуйста, введи текст или отправь голосовое сообщение.');
       return;
     }
@@ -4362,21 +4427,34 @@ _${text.trim()}_
         await askStep11(chatId, userId);
         break;
 
-      case 11: // Фото (было шаг 10)
+      case 11: // Портфолио
         if (msg.photo && msg.photo.length > 0) {
+          // Инициализируем массив портфолио если его нет
+          if (!state.data.portfolio) {
+            state.data.portfolio = [];
+          }
+
+          // Проверяем лимит (максимум 5 фото)
+          if (state.data.portfolio.length >= 5) {
+            const limitMsg = await bot.sendMessage(chatId, '❌ Максимум 5 фото в портфолио. Нажми "Завершить" чтобы сохранить анкету.');
+            deleteMessageAfterDelay(chatId, limitMsg.message_id, 5000);
+            try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
+            return;
+          }
+
           const photo = msg.photo[msg.photo.length - 1];
-          state.data.photoUrl = photo.file_id;
+          state.data.portfolio.push(photo.file_id);
 
           try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
 
-          const confirmMsg = await bot.sendMessage(chatId, '✅ Фото добавлено!');
-          deleteMessageAfterDelay(chatId, confirmMsg.message_id);
+          const photoCount = state.data.portfolio.length;
+          const confirmMsg = await bot.sendMessage(chatId, `✅ Фото ${photoCount} добавлено!\n\nМожешь добавить ещё ${5 - photoCount} фото или завершить заполнение.`);
+          deleteMessageAfterDelay(chatId, confirmMsg.message_id, 5000);
 
-          // Больше нет шага 12, поэтому сразу завершаем
-          const telegramUsername = msg.from.username;
-          await finishForm(chatId, userId, telegramUsername);
+          // Обновляем шаг 11 чтобы показать новый счетчик на кнопке
+          await askStep11(chatId, userId);
         } else {
-          const errMsg = await bot.sendMessage(chatId, '❌ Пожалуйста, отправь фотографию или нажми кнопку "Подтвердить и завершить"');
+          const errMsg = await bot.sendMessage(chatId, '❌ Пожалуйста, отправь фотографию или нажми кнопку "Завершить"');
           deleteMessageAfterDelay(chatId, errMsg.message_id);
           try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
         }

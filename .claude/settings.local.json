@@ -1,7 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(node -c:*)"
+      "Bash(node -c:*)",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill:*)",
+      "Bash(wmic process where \"name=''node.exe''\" delete)",
+      "Bash(node:*)"
     ]
   }
 }

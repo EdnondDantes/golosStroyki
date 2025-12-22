@@ -135,6 +135,10 @@ COMMENT ON COLUMN contractors.payment_conditions IS 'Условия оплаты
 -- Старые поля остаются для обратной совместимости:
 -- citizenship, team_size, description, price могут быть удалены позже или перепрофилированы
 
+-- 11.1. Добавление поля для хранения массива фотографий портфолио
+ALTER TABLE contractors ADD COLUMN IF NOT EXISTS portfolio_photos TEXT[];
+COMMENT ON COLUMN contractors.portfolio_photos IS 'Массив file_id фотографий портфолио из Telegram';
+
 -- ============================================
 -- 12. Создание таблицы orders (объекты/заказы)
 -- ============================================
