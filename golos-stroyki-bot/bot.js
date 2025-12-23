@@ -1877,6 +1877,48 @@ _Выбери из кнопок или напиши свой город_`;
     return;
   }
 
+  // Обработка выбора города в быстром поиске специалистов
+  if (data.startsWith('quick_search_contractors_city_')) {
+    const selectedCity = data.replace('quick_search_contractors_city_', '');
+    await bot.answerCallbackQuery(query.id);
+    await safeDeleteMessage(chatId, query.message.message_id);
+
+    // Сохраняем выбранный город и переходим к шагу 2
+    if (!searchStates[userId]) {
+      searchStates[userId] = {};
+    }
+
+    searchStates[userId].city = selectedCity;
+    searchStates[userId].type = 'search_contractors';
+    searchStates[userId].step = 'waiting_query';
+
+    // Показываем форму описания специалистов (Шаг 2)
+    const searchText = `🔍 Шаг 2 из 2 — Описание специалистов
+
+Опиши, каких специалистов ты ищешь.
+
+Можно:
+— написать текстом
+— или отправить голосовое сообщение
+
+Я подберу специалистов из Базы по твоему запросу.
+
+Пример:
+«Нужен плиточник для квартиры»`;
+
+    const searchPromptMsg = await bot.sendMessage(chatId, searchText, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '◀️ Назад', callback_data: 'quick_search_contractors' }],
+          [{ text: '🏠 В меню', callback_data: 'main_menu' }]
+        ]
+      }
+    });
+
+    searchStates[userId].promptMessageId = searchPromptMsg.message_id;
+    return;
+  }
+
   // Ищу людей - выбор между быстрым поиском и созданием заявки
   if (data === 'search_people') {
     await bot.answerCallbackQuery(query.id);
@@ -1951,36 +1993,36 @@ _Выбери из кнопок или напиши свой город_`;
     return;
   }
 
-  // Быстрый поиск специалистов (для заказчиков)
+  // Быстрый поиск специалистов (для заказчиков) - Шаг 1: Выбор города
   if (data === 'quick_search_contractors') {
     await bot.answerCallbackQuery(query.id);
     await safeDeleteMessage(chatId, query.message.message_id);
 
-    const searchText = `Опиши, каких специалистов ты ищешь.
+    // Показываем выбор города (Шаг 1)
+    const cityText = `📍 Шаг 1 из 2 — Город
 
-Можно:
-— написать текстом
-— или отправить голосовое сообщение
+В каком городе ищешь специалистов?
 
-Я подберу специалистов из Базы по твоему запросу.
+_Выбери из кнопок или напиши свой город_`;
 
-Пример:
-«Нужен плиточник в Москве для квартиры»`;
-
-    const searchPromptMsg = await bot.sendMessage(chatId, searchText, {
+    const cityPromptMsg = await bot.sendMessage(chatId, cityText, {
+      parse_mode: 'Markdown',
       reply_markup: {
         inline_keyboard: [
+          [{ text: 'Москва', callback_data: 'quick_search_contractors_city_Москва' }],
+          [{ text: 'Санкт-Петербург', callback_data: 'quick_search_contractors_city_Санкт-Петербург' }],
+          [{ text: 'Любой город', callback_data: 'quick_search_contractors_city_Любой город' }],
           [{ text: '◀️ Назад', callback_data: 'search_people' }],
           [{ text: '🏠 В меню', callback_data: 'main_menu' }]
         ]
       }
     });
 
-    // Инициализируем состояние поиска и сохраняем ID сообщения для удаления
+    // Инициализируем состояние поиска (Шаг 1: ожидание города)
     searchStates[userId] = {
       type: 'search_contractors',
-      step: 'waiting_query',
-      promptMessageId: searchPromptMsg.message_id // Сохраняем ID для удаления
+      step: 'waiting_city',
+      promptMessageId: cityPromptMsg.message_id
     };
 
     return;
@@ -3760,17 +3802,53 @@ _${text.trim()}_
       return;
     }
 
-    // Обработка быстрого поиска специалистов
-    if (state.type === 'search_contractors' && state.step === 'waiting_query') {
+    // Обработка ввода города в быстром поиске специалистов (Шаг 1)
+    if (state.type === 'search_contractors' && state.step === 'waiting_city') {
       // Удаляем сообщение пользователя
       try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
 
-      // Удаляем сообщение с запросом "Опиши, каких специалистов ты ищешь..."
+      // Удаляем сообщение с вопросом о городе
       if (state.promptMessageId) {
         try {
           await safeDeleteMessage(chatId, state.promptMessageId);
         } catch (e) {}
       }
+
+      // Сохраняем город и переходим к шагу 2
+      state.city = text.trim();
+      state.step = 'waiting_query';
+
+      // Показываем форму описания специалистов (Шаг 2)
+      const searchText = `🔍 Шаг 2 из 2 — Описание специалистов
+
+Опиши, каких специалистов ты ищешь.
+
+Можно:
+— написать текстом
+— или отправить голосовое сообщение
+
+Я подберу специалистов из Базы по твоему запросу.
+
+Пример:
+«Нужен плиточник для квартиры»`;
+
+      const searchPromptMsg = await bot.sendMessage(chatId, searchText, {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '◀️ Назад', callback_data: 'quick_search_contractors' }],
+            [{ text: '🏠 В меню', callback_data: 'main_menu' }]
+          ]
+        }
+      });
+
+      state.promptMessageId = searchPromptMsg.message_id;
+      return;
+    }
+
+    // Обработка быстрого поиска специалистов (Шаг 2)
+    if (state.type === 'search_contractors' && state.step === 'waiting_query') {
+      // Удаляем сообщение пользователя
+      try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
 
       let userQuery = text;
 
@@ -3798,7 +3876,7 @@ _${text.trim()}_
       await safeDeleteMessage(chatId, analyzingMsg.message_id);
 
       if (!category) {
-        // Категория не определена
+        // Категория не определена - НЕ удаляем меню, оставляем для повторной попытки
         const errorMsg = await bot.sendMessage(chatId, `❌ Не получилось понять, кого именно ты ищешь.
 Попробуй описать точнее.
 
@@ -3812,18 +3890,74 @@ _${text.trim()}_
 "Ищу рабочих"`);
         // Автоудаление через 30 секунд
         deleteMessageAfterDelay(chatId, errorMsg.message_id, 30000);
-        // Остаёмся на том же шаге
+        // Остаёмся на том же шаге, меню НЕ удаляем
         return;
       }
 
-      // Категория определена - запускаем поиск
-      const { data: contractorsData, error: contractorsError } = await supabase
-        .from('contractors')
-        .select('*')
-        .eq('category', category)
-        .eq('status', 'approved')
-        .neq('telegram_id', userId)
-        .order('created_at', { ascending: false });
+      // Категория определена - ТЕПЕРЬ удаляем меню
+      if (state.promptMessageId) {
+        try {
+          await safeDeleteMessage(chatId, state.promptMessageId);
+        } catch (e) {}
+      }
+
+      // Категория определена - запускаем поиск с фильтрацией по городу
+      const selectedCity = state.city; // Город, выбранный пользователем
+
+      let contractorsData = [];
+      let contractorsError = null;
+
+      if (selectedCity && selectedCity !== 'Любой город') {
+        // Если выбран конкретный город - получаем всех по категории и фильтруем в коде
+        const { data: allContractors, error } = await supabase
+          .from('contractors')
+          .select('*')
+          .eq('category', category)
+          .eq('status', 'approved')
+          .neq('telegram_id', userId)
+          .order('created_at', { ascending: false });
+
+        contractorsError = error;
+
+        if (!error && allContractors) {
+          // Фильтруем на стороне приложения:
+          // 1. Город содержит выбранный город (например, "Москва")
+          // 2. Город = "Любой город"
+          // 3. ready_for_trips = true (готов к командировкам)
+
+          console.log(`[DEBUG] Всего кандидатов по категории: ${allContractors.length}`);
+          console.log(`[DEBUG] Фильтр по городу: "${selectedCity}"`);
+
+          contractorsData = allContractors.filter(contractor => {
+            const contractorCity = (contractor.city || '').toLowerCase();
+            const selectedCityLower = selectedCity.toLowerCase();
+
+            const cityMatch = contractorCity.includes(selectedCityLower);
+            const anyCity = contractorCity.includes('готов работать в любом городе') || contractorCity.includes('любой город');
+            const readyForTrips = contractor.ready_for_trips === true;
+
+            const result = cityMatch || anyCity || readyForTrips;
+
+            console.log(`[DEBUG] ID ${contractor.id}: city="${contractor.city}", ready_for_trips=${contractor.ready_for_trips}, result=${result} (cityMatch=${cityMatch}, anyCity=${anyCity}, readyForTrips=${readyForTrips})`);
+
+            return result;
+          });
+
+          console.log(`[DEBUG] После фильтрации: ${contractorsData.length} кандидатов`);
+        }
+      } else {
+        // Если выбран "Любой город" - показываем всех специалистов
+        const { data, error } = await supabase
+          .from('contractors')
+          .select('*')
+          .eq('category', category)
+          .eq('status', 'approved')
+          .neq('telegram_id', userId)
+          .order('created_at', { ascending: false });
+
+        contractorsData = data;
+        contractorsError = error;
+      }
 
       if (contractorsError || !contractorsData || contractorsData.length === 0) {
         // Специалистов нет
@@ -3904,13 +4038,6 @@ _${text.trim()}_
       // Удаляем сообщение пользователя
       try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
 
-      // Удаляем сообщение с запросом "Опиши, какую работу ты ищешь..."
-      if (state.promptMessageId) {
-        try {
-          await safeDeleteMessage(chatId, state.promptMessageId);
-        } catch (e) {}
-      }
-
       let userQuery = text;
 
       // Обработка голосового сообщения
@@ -3937,7 +4064,7 @@ _${text.trim()}_
       await safeDeleteMessage(chatId, analyzingMsg.message_id);
 
       if (!category) {
-        // Категория не определена
+        // Категория не определена - НЕ удаляем меню, оставляем для повторной попытки
         const errorMsg = await bot.sendMessage(chatId, `❌ Не получилось понять, какую работу ты ищешь.
 Попробуй описать точнее.
 
@@ -3951,32 +4078,66 @@ _${text.trim()}_
 "Ищу заказы"`);
         // Автоудаление через 30 секунд
         deleteMessageAfterDelay(chatId, errorMsg.message_id, 30000);
-        // Остаёмся на том же шаге
+        // Остаёмся на том же шаге, меню НЕ удаляем
         return;
+      }
+
+      // Категория определена - ТЕПЕРЬ удаляем меню
+      if (state.promptMessageId) {
+        try {
+          await safeDeleteMessage(chatId, state.promptMessageId);
+        } catch (e) {}
       }
 
       // Категория определена - запускаем поиск с фильтрацией по городу
       const selectedCity = state.city; // Город, выбранный пользователем
 
-      let query = supabase
-        .from('orders')
-        .select('*')
-        .eq('category', category)
-        .eq('status', 'approved')
-        .neq('telegram_id', userId)
-        .or('expires_at.is.null,expires_at.gt.' + new Date().toISOString());
+      let ordersData;
+      let ordersError;
 
-      // Фильтр по городу
+      // Фильтр по городу - используем client-side фильтрацию
       if (selectedCity && selectedCity !== 'Любой город') {
-        // Если выбран конкретный город - ищем заявки:
-        // 1. С этим городом
-        // 2. С "Любой город"
-        // Примечание: поле ready_for_trips не применимо к orders, только к contractors
-        query = query.or(`city_location.ilike.%${selectedCity}%,city_location.ilike.%Любой город%`);
-      }
-      // Если выбран "Любой город" - показываем все заявки (без фильтра)
+        // Сначала получаем ВСЕ заявки по категории
+        const { data: allOrders, error } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('category', category)
+          .eq('status', 'approved')
+          .neq('telegram_id', userId)
+          .or('expires_at.is.null,expires_at.gt.' + new Date().toISOString())
+          .order('created_at', { ascending: false });
 
-      const { data: ordersData, error: ordersError } = await query.order('created_at', { ascending: false });
+        ordersError = error;
+
+        if (!error && allOrders) {
+          // Затем фильтруем на клиенте
+          ordersData = allOrders.filter(order => {
+            const orderCity = (order.city_location || '').toLowerCase();
+            const selectedCityLower = selectedCity.toLowerCase();
+
+            // Показываем заявки:
+            // 1. С выбранным городом
+            // 2. С "Любой город"
+            return (
+              orderCity.includes(selectedCityLower) ||  // Город совпадает
+              orderCity.includes('любой город')         // "Любой город"
+            );
+          });
+        }
+      } else {
+        // Если выбран "Любой город" - показываем все заявки (без фильтра)
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('category', category)
+          .eq('status', 'approved')
+          .neq('telegram_id', userId)
+          .or('expires_at.is.null,expires_at.gt.' + new Date().toISOString())
+          .order('created_at', { ascending: false });
+
+        ordersData = data;
+        ordersError = error;
+      }
 
       if (ordersError || !ordersData || ordersData.length === 0) {
         // Заявок нет
