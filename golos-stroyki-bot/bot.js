@@ -686,6 +686,196 @@ ${categoryList.join('\n')}
   }
 }
 
+// Генерация хука для анкеты специалиста через Deepseek AI
+async function generateContractorHook(contractorData) {
+  try {
+    // Если API ключ не настроен, возвращаем null
+    if (!DEEPSEEK_API_KEY || DEEPSEEK_API_KEY === 'your_deepseek_api_key_here') {
+      console.log('⚠️ DEEPSEEK_API_KEY не настроен, пропускаем генерацию хука');
+      return null;
+    }
+
+    // Формируем входные данные для AI
+    const inputData = {
+      specialization: contractorData.specialization || '',
+      experience: contractorData.experience || '',
+      advantages: contractorData.professionalAdvantages || '',
+      objectsWorked: contractorData.objectsWorked || '',
+      workFormat: contractorData.workFormat || '',
+      readyForTrips: contractorData.readyForTrips || false
+    };
+
+    const systemPrompt = `Ты создаешь короткие цепляющие хуки (заголовки) для анкет строителей и подрядчиков.
+
+ЗАДАЧА: Создай хук по формуле [Специализация] + [уникальное отличие] — [польза для клиента]
+
+ПРАВИЛА:
+1. Максимум 60 символов
+2. БЕЗ штампов типа "профессионал", "качество", "опыт работы"
+3. Конкретика, а не общие слова
+4. Если нет явных уникальных преимуществ или опыт меньше 1 года — верни "SKIP"
+5. Используй конкретные факты из данных (оборудование, сертификаты, специализация)
+
+ПРИМЕРЫ ХОРОШИХ ХУКОВ:
+✅ "Электрик с допуском СРО — работаем с промобъектами"
+✅ "Плиточник 10 лет — мозаика и сложные узоры"
+✅ "Геодезист со своим оборудованием — без ожиданий"
+✅ "Кровельщик — гарантия 5 лет на сложные кровли"
+
+ПРИМЕРЫ ПЛОХИХ ХУКОВ:
+❌ "Опытный электрик с большим стажем"
+❌ "Качественная укладка плитки"
+❌ "Профессиональный подход к работе"
+
+Верни ТОЛЬКО текст хука или слово "SKIP"`;
+
+    const userPrompt = `Данные специалиста:
+Формат работы: ${inputData.workFormat}
+Специализация: ${inputData.specialization}
+Опыт: ${inputData.experience}
+Объекты: ${inputData.objectsWorked}
+Преимущества: ${inputData.advantages || 'не указаны'}
+Готов к командировкам: ${inputData.readyForTrips ? 'да' : 'нет'}
+
+Создай хук:`;
+
+    const response = await axios.post(
+      'https://api.deepseek.com/chat/completions',
+      {
+        model: 'deepseek-chat',
+        messages: [
+          {
+            role: 'system',
+            content: systemPrompt
+          },
+          {
+            role: 'user',
+            content: userPrompt
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 80
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${DEEPSEEK_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    const aiResponse = response.data.choices[0].message.content.trim();
+
+    // Если AI вернул SKIP или пустой ответ - возвращаем null
+    if (!aiResponse || aiResponse === 'SKIP' || aiResponse.length > 60) {
+      console.log('⚠️ Хук не создан (SKIP или слишком длинный)');
+      return null;
+    }
+
+    console.log('✅ Хук создан:', aiResponse);
+    return aiResponse;
+
+  } catch (error) {
+    console.error('❌ Ошибка генерации хука через Deepseek:', error.response?.data || error.message);
+    return null;
+  }
+}
+
+// Генерация хука для заявки заказчика через Deepseek AI
+async function generateOrderHook(orderData) {
+  try {
+    // Если API ключ не настроен, возвращаем null
+    if (!DEEPSEEK_API_KEY || DEEPSEEK_API_KEY === 'your_deepseek_api_key_here') {
+      console.log('⚠️ DEEPSEEK_API_KEY не настроен, пропускаем генерацию хука');
+      return null;
+    }
+
+    // Формируем входные данные для AI
+    const inputData = {
+      requestType: orderData.requestType || '',
+      workType: orderData.workType || '',
+      objectType: orderData.objectType || '',
+      cityLocation: orderData.cityLocation || '',
+      executorRequirements: orderData.executorRequirements || '',
+      validityPeriod: orderData.validityPeriod || ''
+    };
+
+    const systemPrompt = `Ты создаешь короткие цепляющие хуки (заголовки) для заявок на строительные работы.
+
+ЗАДАЧА: Создай хук по формуле [Тип работ] + [особенность заказа] — [что предлагается]
+
+ПРАВИЛА:
+1. Максимум 60 символов
+2. БЕЗ штампов типа "срочно требуется", "высокая оплата"
+3. Конкретика: тип объекта, особые условия, сроки
+4. Если заявка стандартная без особенностей — верни "SKIP"
+5. Используй конкретные факты из данных
+
+ПРИМЕРЫ ХОРОШИХ ХУКОВ:
+✅ "Отделка ЖК 200 квартир — долгосрочный контракт"
+✅ "Кровля промобъекта — оплата каждую неделю"
+✅ "Фасад 12 этажей — работа с вышкой и бригадой"
+✅ "Электрика коттеджа — готовые проекты и материалы"
+
+ПРИМЕРЫ ПЛОХИХ ХУКОВ:
+❌ "Требуется электрик на объект"
+❌ "Ищем бригаду для работ"
+❌ "Срочно нужен мастер"
+
+Верни ТОЛЬКО текст хука или слово "SKIP"`;
+
+    const userPrompt = `Данные заявки:
+Тип запроса: ${inputData.requestType}
+Город: ${inputData.cityLocation}
+Тип объекта: ${inputData.objectType}
+Вид работ: ${inputData.workType}
+Требования: ${inputData.executorRequirements || 'не указаны'}
+Срок актуальности: ${inputData.validityPeriod}
+
+Создай хук:`;
+
+    const response = await axios.post(
+      'https://api.deepseek.com/chat/completions',
+      {
+        model: 'deepseek-chat',
+        messages: [
+          {
+            role: 'system',
+            content: systemPrompt
+          },
+          {
+            role: 'user',
+            content: userPrompt
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 80
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${DEEPSEEK_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    const aiResponse = response.data.choices[0].message.content.trim();
+
+    // Если AI вернул SKIP или пустой ответ - возвращаем null
+    if (!aiResponse || aiResponse === 'SKIP' || aiResponse.length > 60) {
+      console.log('⚠️ Хук не создан (SKIP или слишком длинный)');
+      return null;
+    }
+
+    console.log('✅ Хук создан:', aiResponse);
+    return aiResponse;
+
+  } catch (error) {
+    console.error('❌ Ошибка генерации хука через Deepseek:', error.response?.data || error.message);
+    return null;
+  }
+}
+
 // Форматирование текста для Telegram (Markdown)
 function escapeMarkdown(text) {
   return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
@@ -948,6 +1138,7 @@ async function saveContractorToDatabase(data) {
           telegram_tag: data.telegramTag,
           category: data.category || null, // этап 5: AI-определенная категория
           role: data.role || null, // этап 2: сохраняем роль
+          hook: data.hook || null, // Сохраняем хук
           status: 'approved', // одобрено
           created_at: new Date().toISOString()
         }
@@ -1053,6 +1244,7 @@ async function saveOrderToDatabase(data) {
           telegram_tag: data.telegramTag,
           category: data.category || null, // этап 5: AI-определенная категория
           role: data.role || null, // этап 2: сохраняем роль
+          hook: data.hook || null, // Сохраняем хук
           status: 'approved',
           created_at: new Date().toISOString()
         }
@@ -1397,6 +1589,15 @@ bot.on('callback_query', async (query) => {
   if (data === 'main_menu') {
     await safeDeleteMessage(chatId, query.message.message_id);
     await bot.answerCallbackQuery(query.id);
+
+    // ИСПРАВЛЕНИЕ: Очищаем все состояния при возврате в меню
+    if (userStates[userId]) {
+      delete userStates[userId];
+    }
+    if (searchStates[userId]) {
+      delete searchStates[userId];
+    }
+
     await showMainMenu(chatId);
     return;
   }
@@ -1782,6 +1983,14 @@ bot.on('callback_query', async (query) => {
   if (data === 'search_work') {
     await bot.answerCallbackQuery(query.id);
 
+    // ИСПРАВЛЕНИЕ: Очищаем все состояния при переходе в этот раздел
+    if (userStates[userId]) {
+      delete userStates[userId];
+    }
+    if (searchStates[userId]) {
+      delete searchStates[userId];
+    }
+
     // Удаляем меню
     await safeDeleteMessage(chatId, query.message.message_id);
 
@@ -1809,6 +2018,11 @@ bot.on('callback_query', async (query) => {
   if (data === 'create_contractor_profile') {
     await bot.answerCallbackQuery(query.id);
     await safeDeleteMessage(chatId, query.message.message_id);
+
+    // ИСПРАВЛЕНИЕ: Очищаем состояние быстрого поиска если оно есть
+    if (searchStates[userId]) {
+      delete searchStates[userId];
+    }
 
     // Проверяем количество существующих анкет пользователя
     const { data: existingProfiles, error: checkError } = await supabase
@@ -1857,6 +2071,11 @@ bot.on('callback_query', async (query) => {
   if (data === 'quick_search_work') {
     await bot.answerCallbackQuery(query.id);
     await safeDeleteMessage(chatId, query.message.message_id);
+
+    // ИСПРАВЛЕНИЕ: Очищаем состояние создания анкеты если оно есть
+    if (userStates[userId]) {
+      delete userStates[userId];
+    }
 
     // Проверяем наличие анкеты специалиста
     const { data: contractorData, error: contractorError } = await supabase
@@ -2031,6 +2250,14 @@ bot.on('callback_query', async (query) => {
   if (data === 'search_people') {
     await bot.answerCallbackQuery(query.id);
 
+    // ИСПРАВЛЕНИЕ: Очищаем все состояния при переходе в этот раздел
+    if (userStates[userId]) {
+      delete userStates[userId];
+    }
+    if (searchStates[userId]) {
+      delete searchStates[userId];
+    }
+
     // Удаляем меню
     await safeDeleteMessage(chatId, query.message.message_id);
 
@@ -2058,6 +2285,11 @@ bot.on('callback_query', async (query) => {
   if (data === 'create_order') {
     await bot.answerCallbackQuery(query.id);
     await safeDeleteMessage(chatId, query.message.message_id);
+
+    // ИСПРАВЛЕНИЕ: Очищаем состояние быстрого поиска если оно есть
+    if (searchStates[userId]) {
+      delete searchStates[userId];
+    }
 
     // Проверяем количество существующих заявок пользователя
     const { data: existingOrders, error: checkError } = await supabase
@@ -2105,6 +2337,11 @@ bot.on('callback_query', async (query) => {
   if (data === 'quick_search_contractors') {
     await bot.answerCallbackQuery(query.id);
     await safeDeleteMessage(chatId, query.message.message_id);
+
+    // ИСПРАВЛЕНИЕ: Очищаем состояние создания анкеты если оно есть
+    if (userStates[userId]) {
+      delete userStates[userId];
+    }
 
     // Показываем выбор города (Шаг 1)
     const cityText = `📍 Шаг 1 из 2 — Город
@@ -2304,7 +2541,9 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    const cardText = formatContractorCard(contractor);
+    // Получаем роль специалиста
+    const userRole = await checkUserRole(userId);
+    const cardText = formatContractorCard(contractor, userRole);
     const statusText = contractor.status === 'approved' ? '✅ Опубликована' :
                        (contractor.status === 'pending' ? '⏳ На модерации' : '❌ Отклонена');
 
@@ -2343,7 +2582,9 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    const cardText = formatOrderCard(order);
+    // Получаем роль компании
+    const companyRole = await checkUserRole(userId);
+    const cardText = formatOrderCard(order, companyRole);
     const statusText = order.status === 'approved' ? '✅ Опубликована' :
                        (order.status === 'pending' ? '⏳ На модерации' : '❌ Отклонена');
 
@@ -2702,11 +2943,14 @@ function formatContractorCard(contractor, userRole = null) {
     'не указан';
 
   // Формируем роль эмодзи (если роль передана)
-  const roleEmoji = userRole ? ` 🧠 [${userRole}]` : '';
+  const roleEmoji = userRole ? `\n🧠 [${userRole}]` : '';
+
+  // Используем хук вместо specialization, если он есть
+  const displayHook = contractor.hook || contractor.specialization;
 
   return `📊 <b>ИЩЕТ РАБОТУ</b>
-
-<b>${contractor.specialization}</b>
+━━━━━━━━━━━━━━━━━━━━━━━
+${displayHook}
 
 ${contractor.name} | ${contractor.category}${roleEmoji}
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -2731,11 +2975,11 @@ function formatOrderCard(order, companyRole = null) {
     'не указан';
 
   // Формируем роль эмодзи (если роль передана)
-  const roleEmoji = companyRole ? ` 🏗️ ${companyRole}` : '';
+  const roleEmoji = companyRole ? `\n🏗️ [${companyRole}]` : '';
 
   return `📊 <b>ИЩЮТ СОТРУДНИКА</b>
-
-<b>${order.category}</b>
+━━━━━━━━━━━━━━━━━━━━━━━
+${order.category}
 
 ${order.company_name}${roleEmoji}
 ━━━━━━━━━━━━━━━━━━━━━━━
@@ -3164,8 +3408,8 @@ async function askStep8(chatId, userId) {
 
 Укажи, в каком формате ты работаешь.
 
-_Это поможет заказчикам понять,
-как с тобой можно сотрудничать._`;
+<i>Это поможет заказчикам понять,
+как с тобой можно сотрудничать.</i>`;
 
   // Удаляем предыдущее сообщение шага если оно есть
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
@@ -3333,6 +3577,16 @@ async function finishForm(chatId, userId, telegramUsername) {
   // НОВОЕ: Получаем роль из БД вместо временного хранилища
   const userRole = await checkUserRole(userId);
 
+  // Генерируем хук через AI
+  const hook = await generateContractorHook({
+    specialization: userData.data.specialization,
+    experience: userData.data.experience,
+    professionalAdvantages: userData.data.professionalAdvantages,
+    objectsWorked: userData.data.objectsWorked,
+    workFormat: userData.data.workFormat,
+    readyForTrips: userData.data.readyForTrips || false
+  });
+
   // Сохраняем в базу данных (этап 5: добавлена категория)
   const result = await saveContractorToDatabase({
     userId,
@@ -3352,7 +3606,8 @@ async function finishForm(chatId, userId, telegramUsername) {
     portfolio: userData.data.portfolio || [], // Весь массив фотографий портфолио
     telegramTag: telegramUsername ? `@${telegramUsername}` : null,
     category: userData.data.category || null, // этап 5: AI-определенная категория
-    role: userRole || null // этап 2: получаем роль из таблицы user_roles
+    role: userRole || null, // этап 2: получаем роль из таблицы user_roles
+    hook: hook || null // Добавляем сгенерированный хук
   });
 
   if (result.success) {
@@ -3388,6 +3643,16 @@ async function finishOrderForm(chatId, userId) {
   // НОВОЕ: Получаем роль из БД вместо временного хранилища
   const userRole = await checkUserRole(userId);
 
+  // Генерируем хук через AI
+  const hook = await generateOrderHook({
+    requestType: userData.data.requestType,
+    cityLocation: userData.data.cityLocation,
+    objectType: userData.data.objectType,
+    workType: userData.data.workType,
+    executorRequirements: userData.data.executorRequirements,
+    validityPeriod: userData.data.validityPeriod
+  });
+
   // Сохраняем в базу данных (этап 5: добавлена категория)
   const result = await saveOrderToDatabase({
     userId,
@@ -3402,7 +3667,8 @@ async function finishOrderForm(chatId, userId) {
     contact: userData.data.contact,
     telegramTag: userData.data.telegramTag,
     category: userData.data.category || null, // этап 5: AI-определенная категория
-    role: userRole || null // этап 2: получаем роль из таблицы user_roles
+    role: userRole || null, // этап 2: получаем роль из таблицы user_roles
+    hook: hook || null // Добавляем сгенерированный хук
   });
 
   if (result.success) {
