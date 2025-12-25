@@ -16,12 +16,15 @@ const YANDEX_FOLDER_ID = process.env.YANDEX_FOLDER_ID;
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 const CHANNEL_ID = process.env.CHANNEL_ID; // например: @golos_stroyki
 const COMMUNITY_CHANNEL_NAME = process.env.COMMUNITY_CHANNEL_NAME || 'golos_stroyki'; // имя канала для ссылок на портфолио
+const BOT_USERNAME = process.env.BOT_USERNAME; // username бота для ссылок в постах канала
+const CONTRACTORS_THREAD_ID = process.env.CONTRACTORS_THREAD_ID; // ID топика для анкет специалистов
+const ORDERS_THREAD_ID = process.env.ORDERS_THREAD_ID; // ID топика для заявок
 
 // Инициализация
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// Тест соединения
+// Тест соединения с Supabase
 (async () => {
   try {
     const { data, error } = await supabase.from('contractors').select('count');
@@ -32,6 +35,41 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
     }
   } catch (err) {
     console.error('❌ Критическая ошибка Supabase:', err.message);
+  }
+})();
+
+// Проверка прав бота в канале при старте
+(async () => {
+  try {
+    // Получаем информацию о боте
+    const me = await bot.getMe();
+    console.log(`🤖 Бот запущен: @${me.username} (ID: ${me.id})`);
+
+    // Проверяем права в канале
+    if (CHANNEL_ID) {
+      try {
+        const member = await bot.getChatMember(CHANNEL_ID, me.id);
+
+        if (member.status === 'administrator' || member.status === 'creator') {
+          if (member.can_post_messages) {
+            console.log('✅ Канал подключен, публикация работает');
+          } else {
+            console.log('⚠️ Бот администратор, но нет прав на публикацию');
+            console.log('   Дайте боту право "Публикация сообщений" в настройках канала');
+          }
+        } else {
+          console.log('❌ Бот не является администратором канала');
+          console.log('   Добавьте бота в администраторы канала:', CHANNEL_ID);
+        }
+      } catch (channelError) {
+        console.error('❌ Не удалось подключиться к каналу:', channelError.message);
+        console.log('   Проверьте CHANNEL_ID в файле .env');
+      }
+    } else {
+      console.log('⚠️ CHANNEL_ID не указан в .env - публикация в канал отключена');
+    }
+  } catch (error) {
+    console.error('❌ Ошибка при проверке прав бота:', error.message);
   }
 })();
 
@@ -530,13 +568,14 @@ async function processCityWithDeepseek(text) {
       return text;
     }
 
-    const systemPrompt = `Ты помощник, который исправляет и нормализует названия городов России.
+    const systemPrompt = `Ты помощник, который исправляет и нормализует названия городов России, СНГ и мира.
 
 Твоя задача:
 1. Исправить опечатки в названии города
-2. Привести к правильному написанию (например: "питер" → "Санкт-Петербург", "мск" → "Москва")
+2. Привести к правильному написанию (например: "питер" → "Санкт-Петербург", "мск" → "Москва", "минск" → "Минск")
 3. Если это НЕ название города или непонятный текст - верни слово "UNKNOWN"
 4. Вернуть ТОЛЬКО название города без дополнительных слов
+5. Принимаются города из любых стран, включая Россию, Беларусь, Казахстан, Украину и другие
 
 Примеры:
 Вход: "маскав" → Выход: "Москва"
@@ -544,6 +583,9 @@ async function processCityWithDeepseek(text) {
 Вход: "мск" → Выход: "Москва"
 Вход: "спб" → Выход: "Санкт-Петербург"
 Вход: "Новосибирскк" → Выход: "Новосибирск"
+Вход: "минск" → Выход: "Минск"
+Вход: "киев" → Выход: "Киев"
+Вход: "алматы" → Выход: "Алматы"
 Вход: "asdfgh" → Выход: "UNKNOWN"
 Вход: "123" → Выход: "UNKNOWN"`;
 
@@ -2909,7 +2951,7 @@ async function showSearchResults(chatId, userId, offset) {
   // Отправляем карточки подрядчиков
   for (const contractor of contractors) {
     // Получаем роль специалиста (если доступно)
-    const userRole = contractor.user_id ? await checkUserRole(contractor.user_id) : null;
+    const userRole = contractor.telegram_id ? await checkUserRole(contractor.telegram_id) : null;
     const cardText = formatContractorCard(contractor, userRole);
 
     // Отправляем только текст анкеты (фото не отображаются)
@@ -2948,6 +2990,15 @@ function formatContractorCard(contractor, userRole = null) {
   // Используем хук вместо specialization, если он есть
   const displayHook = contractor.hook || contractor.specialization;
 
+  // Формируем ссылку на портфолио (только если есть фото И опубликовано в канале)
+  let portfolioLink = '';
+  if (contractor.portfolio_photos &&
+      contractor.portfolio_photos.length > 0 &&
+      contractor.channel_post_id) {
+    const channelLink = `https://t.me/${COMMUNITY_CHANNEL_NAME}/${contractor.channel_post_id}`;
+    portfolioLink = `\n🖼 <b><u>Портфолио:</u></b> <a href="${channelLink}">смотреть в сообществе</a>`;
+  }
+
   return `📊 <b>ИЩЕТ РАБОТУ</b>
 ━━━━━━━━━━━━━━━━━━━━━━━
 ${displayHook}
@@ -2960,7 +3011,7 @@ ${contractor.name} | ${contractor.category}${roleEmoji}
 📍 <b><u>Город / регион:</u></b> ${contractor.city}${tripsText}
 ⏱ <b><u>Опыт:</u></b> ${contractor.experience}
 🏗 <b><u>Задачи / объекты:</u></b> ${contractor.objects_worked}
-${advantages ? `⭐️ <b><u>Преимущества:</u></b> ${advantages}\n` : ''}📋 <b><u>Оформление:</u></b> ${contractor.cooperation_format}
+${advantages ? `⭐️ <b><u>Преимущества:</u></b> ${advantages}\n` : ''}📋 <b><u>Оформление:</u></b> ${contractor.cooperation_format}${portfolioLink}
 
 ━━━━━━━━━━━━━━━━━━━━━━━
 📞 ${contractor.contact} | ${telegramTag}`;
@@ -2991,6 +3042,176 @@ ${order.company_name}${roleEmoji}
 📝 <b><u>Задача:</u></b> ${order.work_type}
 ${requirements ? `✅ <b><u>Требования:</u></b> ${requirements}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━
 📞 ${order.contact} | ${telegramTag}`;
+}
+
+// ==================== ФУНКЦИИ ФОРМАТИРОВАНИЯ ДЛЯ КАНАЛА ====================
+
+// Форматирование поста специалиста для канала (БЕЗ контактов)
+function formatChannelContractorPost(contractor) {
+  const tripsText = contractor.ready_for_trips ? ' — готов к командировкам' : '';
+  const advantages = contractor.professional_advantages || '';
+
+  // Используем хук вместо specialization, если он есть
+  const displayHook = contractor.hook || contractor.specialization;
+
+  // Роль (если есть)
+  const roleEmoji = contractor.role ? `\n🧠 [${contractor.role}]` : '';
+
+  // Формируем ссылку на бота
+  const botLink = `<a href="https://t.me/${BOT_USERNAME}">Базе сообщества</a>`;
+
+  return `📊 <b>ИЩЕТ РАБОТУ</b>
+━━━━━━━━━━━━━━━━━━━━━━━
+${displayHook}
+
+${contractor.name} | ${contractor.category}${roleEmoji}
+━━━━━━━━━━━━━━━━━━━━━━━
+
+🔧 <b><u>Специализация:</u></b> ${contractor.specialization}
+💼 <b><u>Формат работы:</u></b> ${contractor.work_format}
+📍 <b><u>Город / регион:</u></b> ${contractor.city}${tripsText}
+⏱ <b><u>Опыт:</u></b> ${contractor.experience}
+🏗 <b><u>Задачи / объекты:</u></b> ${contractor.objects_worked}
+${advantages ? `⭐️ <b><u>Преимущества:</u></b> ${advantages}\n` : ''}📋 <b><u>Оформление:</u></b> ${contractor.cooperation_format}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+☎️ Контакты этого специалиста и другие предложения —
+доступны в ${botLink}`;
+}
+
+// Форматирование поста заявки для канала (БЕЗ контактов)
+function formatChannelOrderPost(order) {
+  const requirements = order.executor_requirements || '';
+
+  // Используем хук или category
+  const displayHook = order.hook || order.category;
+
+  // Роль (если есть)
+  const roleEmoji = order.role ? `\n🏗️ [${order.role}]` : '';
+
+  // Формируем ссылку на бота
+  const botLink = `<a href="https://t.me/${BOT_USERNAME}">Базе сообщества</a>`;
+
+  return `📊 <b>ИЩЮТ СОТРУДНИКА</b>
+━━━━━━━━━━━━━━━━━━━━━━━
+${displayHook}
+
+${order.company_name}${roleEmoji}
+━━━━━━━━━━━━━━━━━━━━━━━
+
+🔍 <b><u>Ищут специалиста:</u></b> ${order.category}
+🏢 <b><u>Заказчик:</u></b> ${order.company_name}
+📍 <b><u>Город / объект:</u></b> ${order.city_location}
+
+📝 <b><u>Задача:</u></b> ${order.work_type}
+${requirements ? `✅ <b><u>Требования:</u></b> ${requirements}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━
+☎️ Контакты этого заказчика и другие предложения —
+доступны в ${botLink}`;
+}
+
+// ==================== ФУНКЦИИ ПУБЛИКАЦИИ В КАНАЛ ====================
+
+// Публикация анкеты специалиста в канал
+async function publishContractorToChannel(contractor, contractorId) {
+  try {
+    console.log(`📤 Публикация анкеты специалиста ${contractorId} в канал...`);
+
+    // Форматируем текст для канала
+    const postText = formatChannelContractorPost(contractor);
+
+    let sentMessage;
+    const photos = contractor.portfolio_photos || [];
+
+    // Отправляем в зависимости от количества фото
+    if (photos.length === 0) {
+      // Нет фото - только текст
+      sentMessage = await bot.sendMessage(CHANNEL_ID, postText, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        message_thread_id: CONTRACTORS_THREAD_ID
+      });
+    } else if (photos.length === 1) {
+      // Одно фото - sendPhoto с caption
+      sentMessage = await bot.sendPhoto(CHANNEL_ID, photos[0], {
+        caption: postText,
+        parse_mode: 'HTML',
+        message_thread_id: CONTRACTORS_THREAD_ID
+      });
+    } else {
+      // Несколько фото (2-6) - медиагруппа
+      const media = photos.slice(0, 6).map((photoId, index) => ({
+        type: 'photo',
+        media: photoId,
+        ...(index === 0 ? { caption: postText, parse_mode: 'HTML' } : {})
+      }));
+
+      const sentMessages = await bot.sendMediaGroup(CHANNEL_ID, media, {
+        message_thread_id: CONTRACTORS_THREAD_ID
+      });
+      sentMessage = sentMessages[0]; // Берём первое сообщение из группы
+    }
+
+    // Получаем message_id
+    const messageId = sentMessage.message_id;
+    console.log(`✅ Пост опубликован, message_id: ${messageId}`);
+
+    // Сохраняем в базу
+    const { error } = await supabase
+      .from('contractors')
+      .update({ channel_post_id: messageId })
+      .eq('id', contractorId);
+
+    if (error) {
+      console.error('❌ Ошибка сохранения channel_post_id:', error.message);
+    } else {
+      console.log(`✅ channel_post_id сохранён в базу для анкеты ${contractorId}`);
+    }
+
+    return messageId;
+  } catch (error) {
+    console.error('❌ Ошибка публикации анкеты в канал:', error.message);
+    // НЕ прерываем создание анкеты - просто логируем ошибку
+    return null;
+  }
+}
+
+// Публикация заявки в канал
+async function publishOrderToChannel(order, orderId) {
+  try {
+    console.log(`📤 Публикация заявки ${orderId} в канал...`);
+
+    // Форматируем текст для канала
+    const postText = formatChannelOrderPost(order);
+
+    // У заявок нет фото - только текст
+    const sentMessage = await bot.sendMessage(CHANNEL_ID, postText, {
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+      message_thread_id: ORDERS_THREAD_ID
+    });
+
+    // Получаем message_id
+    const messageId = sentMessage.message_id;
+    console.log(`✅ Пост опубликован, message_id: ${messageId}`);
+
+    // Сохраняем в базу
+    const { error } = await supabase
+      .from('orders')
+      .update({ channel_post_id: messageId })
+      .eq('id', orderId);
+
+    if (error) {
+      console.error('❌ Ошибка сохранения channel_post_id:', error.message);
+    } else {
+      console.log(`✅ channel_post_id сохранён в базу для заявки ${orderId}`);
+    }
+
+    return messageId;
+  } catch (error) {
+    console.error('❌ Ошибка публикации заявки в канал:', error.message);
+    // НЕ прерываем создание заявки - просто логируем ошибку
+    return null;
+  }
 }
 
 // Функция показа карточек заявок (для специалистов)
@@ -3060,7 +3281,7 @@ async function showContractorCards(chatId, userId, currentIndex) {
   }
 
   // Получаем роль специалиста (если доступно)
-  const userRole = currentContractor.user_id ? await checkUserRole(currentContractor.user_id) : null;
+  const userRole = currentContractor.telegram_id ? await checkUserRole(currentContractor.telegram_id) : null;
 
   // Формируем текст карточки с номером
   const cardText = `📊 <b>Результат ${currentIndex + 1} из ${contractors.length}</b>\n\n${formatContractorCard(currentContractor, userRole)}`;
@@ -3611,6 +3832,17 @@ async function finishForm(chatId, userId, telegramUsername) {
   });
 
   if (result.success) {
+    // Публикуем анкету в канал
+    try {
+      // Используем данные из базы, чтобы убедиться, что все поля присутствуют
+      const savedContractor = result.data[0];
+
+      await publishContractorToChannel(savedContractor, savedContractor.id);
+    } catch (error) {
+      console.error('❌ Ошибка публикации в канал:', error.message);
+      // НЕ прерываем - публикация не критична для пользователя
+    }
+
     const successText = `Готово ✅
 Твоя анкета добавлена в Базу сообщества
 и опубликована в сообществе «Голос Стройки».
@@ -3672,6 +3904,25 @@ async function finishOrderForm(chatId, userId) {
   });
 
   if (result.success) {
+    // Публикуем заявку в канал
+    try {
+      const orderData = {
+        ...userData.data,
+        hook: hook,
+        role: userRole,
+        category: userData.data.category,
+        company_name: userData.data.companyName,
+        city_location: userData.data.cityLocation,
+        work_type: userData.data.workType,
+        executor_requirements: userData.data.executorRequirements
+      };
+
+      await publishOrderToChannel(orderData, result.data[0].id);
+    } catch (error) {
+      console.error('❌ Ошибка публикации заявки в канал:', error.message);
+      // НЕ прерываем - публикация не критична для пользователя
+    }
+
     const successText = `Готово ✅
 Твоя заявка опубликована в сообществе «Голос Стройки».
 
@@ -3994,10 +4245,7 @@ async function askOrderStep8(chatId, userId) {
   const text = `${formText}Шаг 8 из 9 — Контактный номер телефона
 
 Напиши контактный телефон
-или нажми кнопку «Поделиться контактом».
-
-_Контакты будут доступны специалистам
-только через Базу сообщества._`;
+или нажми кнопку «Поделиться контактом».`;
 
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
     try {
