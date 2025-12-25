@@ -2090,6 +2090,7 @@ bot.on('callback_query', async (query) => {
 <i>Контакты будут доступны специалистам только через Базу.</i>`;
 
     await bot.sendMessage(chatId, confirmText, {
+      parse_mode: 'HTML',
       reply_markup: {
         inline_keyboard: [
           [{ text: '✅ Да, начать', callback_data: 'start_order_form' }],
@@ -2666,7 +2667,9 @@ async function showSearchResults(chatId, userId, offset) {
 
   // Отправляем карточки подрядчиков
   for (const contractor of contractors) {
-    const cardText = formatContractorCard(contractor);
+    // Получаем роль специалиста (если доступно)
+    const userRole = contractor.user_id ? await checkUserRole(contractor.user_id) : null;
+    const cardText = formatContractorCard(contractor, userRole);
 
     // Отправляем только текст анкеты (фото не отображаются)
     await bot.sendMessage(chatId, cardText, { parse_mode: 'HTML' });
@@ -2689,7 +2692,7 @@ async function showSearchResults(chatId, userId, offset) {
   });
 }
 
-function formatContractorCard(contractor) {
+function formatContractorCard(contractor, userRole = null) {
   const tripsText = contractor.ready_for_trips ? ' — готов к командировкам' : '';
   const advantages = contractor.professional_advantages || '';
 
@@ -2698,9 +2701,14 @@ function formatContractorCard(contractor) {
     (contractor.telegram_tag.startsWith('@') ? contractor.telegram_tag : `@${contractor.telegram_tag}`) :
     'не указан';
 
-  return `<b>${contractor.specialization}</b>
+  // Формируем роль эмодзи (если роль передана)
+  const roleEmoji = userRole ? ` 🧠 [${userRole}]` : '';
 
-${contractor.name} | ${contractor.category}
+  return `📊 <b>ИЩЕТ РАБОТУ</b>
+
+<b>${contractor.specialization}</b>
+
+${contractor.name} | ${contractor.category}${roleEmoji}
 ━━━━━━━━━━━━━━━━━━━━━━━
 
 🔧 <b><u>Специализация:</u></b> ${contractor.specialization}
@@ -2714,7 +2722,7 @@ ${advantages ? `⭐️ <b><u>Преимущества:</u></b> ${advantages}\n` 
 📞 ${contractor.contact} | ${telegramTag}`;
 }
 
-function formatOrderCard(order) {
+function formatOrderCard(order, companyRole = null) {
   const requirements = order.executor_requirements || '';
 
   // Убираем дубль @ если telegram_tag уже содержит @
@@ -2722,15 +2730,19 @@ function formatOrderCard(order) {
     (order.telegram_tag.startsWith('@') ? order.telegram_tag : `@${order.telegram_tag}`) :
     'не указан';
 
-  return `<b>${order.category}</b>
+  // Формируем роль эмодзи (если роль передана)
+  const roleEmoji = companyRole ? ` 🏗️ ${companyRole}` : '';
 
-${order.company_name}
+  return `📊 <b>ИЩЮТ СОТРУДНИКА</b>
+
+<b>${order.category}</b>
+
+${order.company_name}${roleEmoji}
 ━━━━━━━━━━━━━━━━━━━━━━━
 
 🔍 <b><u>Ищут специалиста:</u></b> ${order.category}
 🏢 <b><u>Заказчик:</u></b> ${order.company_name}
 📍 <b><u>Город / объект:</u></b> ${order.city_location}
-⏰ <b><u>Актуальность:</u></b> ${order.validity_period}
 
 📝 <b><u>Задача:</u></b> ${order.work_type}
 ${requirements ? `✅ <b><u>Требования:</u></b> ${requirements}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━
@@ -2754,8 +2766,11 @@ async function showOrderCards(chatId, userId, currentIndex) {
     return;
   }
 
+  // Получаем роль компании (если доступно)
+  const companyRole = currentOrder.company_user_id ? await checkUserRole(currentOrder.company_user_id) : null;
+
   // Формируем текст карточки с номером
-  const cardText = `📊 <b>Результат ${currentIndex + 1} из ${orders.length}</b>\n\n${formatOrderCard(currentOrder)}`;
+  const cardText = `📊 <b>Результат ${currentIndex + 1} из ${orders.length}</b>\n\n${formatOrderCard(currentOrder, companyRole)}`;
 
   // Формируем кнопки навигации
   const buttons = [];
@@ -2800,8 +2815,11 @@ async function showContractorCards(chatId, userId, currentIndex) {
     return;
   }
 
+  // Получаем роль специалиста (если доступно)
+  const userRole = currentContractor.user_id ? await checkUserRole(currentContractor.user_id) : null;
+
   // Формируем текст карточки с номером
-  const cardText = `📊 <b>Результат ${currentIndex + 1} из ${contractors.length}</b>\n\n${formatContractorCard(currentContractor)}`;
+  const cardText = `📊 <b>Результат ${currentIndex + 1} из ${contractors.length}</b>\n\n${formatContractorCard(currentContractor, userRole)}`;
 
   // Формируем кнопки навигации
   const buttons = [];
