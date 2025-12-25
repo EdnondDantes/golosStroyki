@@ -120,7 +120,7 @@ async function sendOrEditStepMessage(chatId, userId, text, keyboard) {
 
   // Отправляем новое сообщение
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     ...keyboard
   });
 
@@ -693,7 +693,7 @@ function escapeMarkdown(text) {
 
 // Форматирование текущей анкеты для отображения
 function formatCurrentFormData(userData, currentStep) {
-  let formText = '📋 *Твоя анкета:*\n\n';
+  let formText = '📋 <b>Твоя анкета:</b>\n\n';
 
   if (userData.workFormat) {
     formText += `1️⃣ Формат работы: ${userData.workFormat}\n`;
@@ -737,7 +737,7 @@ function formatCurrentFormData(userData, currentStep) {
   return formText;
 }
 
-// Проверка роли пользователя (этап 2)
+// Проверка роли пользователя (этап 2) - поиск в таблице user_roles
 async function checkUserRole(userId) {
   try {
     // Проверка наличия URL и ключа
@@ -751,46 +751,16 @@ async function checkUserRole(userId) {
       return null;
     }
 
-    // Проверяем в таблице contractors
-    const { data: contractorData, error: contractorError } = await supabase
-      .from('contractors')
+    // Проверяем в таблице user_roles
+    const { data: roleData, error: roleError } = await supabase
+      .from('user_roles')
       .select('role')
       .eq('telegram_id', userId)
-      .not('role', 'is', null)
-      .limit(1)
       .single();
 
-    if (contractorData && contractorData.role) {
-      console.log(`✅ Роль найдена в contractors: ${contractorData.role}`);
-      return contractorData.role;
-    }
-
-    // Проверяем в таблице orders
-    const { data: orderData, error: orderError } = await supabase
-      .from('orders')
-      .select('role')
-      .eq('telegram_id', userId)
-      .not('role', 'is', null)
-      .limit(1)
-      .single();
-
-    if (orderData && orderData.role) {
-      console.log(`✅ Роль найдена в orders: ${orderData.role}`);
-      return orderData.role;
-    }
-
-    // Проверяем в таблице suppliers
-    const { data: supplierData, error: supplierError } = await supabase
-      .from('suppliers')
-      .select('role')
-      .eq('telegram_id', userId)
-      .not('role', 'is', null)
-      .limit(1)
-      .single();
-
-    if (supplierData && supplierData.role) {
-      console.log(`✅ Роль найдена в suppliers: ${supplierData.role}`);
-      return supplierData.role;
+    if (roleData && roleData.role) {
+      console.log(`✅ Роль найдена в user_roles: ${roleData.role}`);
+      return roleData.role;
     }
 
     // Роль не найдена
@@ -798,8 +768,83 @@ async function checkUserRole(userId) {
     return null;
 
   } catch (error) {
-    console.error('❌ Ошибка проверки роли:', error.message);
+    // Ошибка может быть, если запись не найдена (это нормально)
+    if (error.code !== 'PGRST116') { // PGRST116 = not found
+      console.error('❌ Ошибка проверки роли:', error.message);
+    }
     return null;
+  }
+}
+
+// Сохранение роли пользователя (этап 2) - новая функция
+async function saveUserRole(userId, role) {
+  try {
+    // Проверка наличия URL и ключа
+    if (!SUPABASE_URL || SUPABASE_URL === 'your_supabase_url_here') {
+      console.error('❌ SUPABASE_URL не настроен в .env файле');
+      return { success: false, error: 'Supabase URL не настроен' };
+    }
+
+    if (!SUPABASE_KEY || SUPABASE_KEY === 'your_supabase_key_here') {
+      console.error('❌ SUPABASE_KEY не настроен в .env файле');
+      return { success: false, error: 'Supabase KEY не настроен' };
+    }
+
+    // Сначала проверяем, есть ли уже роль для этого пользователя
+    const { data: existing, error: checkError } = await supabase
+      .from('user_roles')
+      .select('*')
+      .eq('telegram_id', userId)
+      .single();
+
+    if (existing) {
+      // Если роль уже есть - обновляем
+      const { data: result, error } = await supabase
+        .from('user_roles')
+        .update({
+          role: role,
+          updated_at: new Date().toISOString()
+        })
+        .eq('telegram_id', userId)
+        .select();
+
+      if (error) {
+        console.error('❌ Ошибка обновления роли:', error.message);
+        throw error;
+      }
+
+      console.log('✅ Роль обновлена в БД:', result);
+      return { success: true, data: result, isNew: false };
+    } else {
+      // Если роли нет - создаем новую запись
+      const { data: result, error } = await supabase
+        .from('user_roles')
+        .insert([
+          {
+            telegram_id: userId,
+            role: role,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        ])
+        .select();
+
+      if (error) {
+        console.error('❌ Ошибка Supabase при сохранении роли:', error.message, error.details, error.hint);
+        throw error;
+      }
+
+      console.log('✅ Роль сохранена в БД:', result);
+      return { success: true, data: result, isNew: true };
+    }
+  } catch (error) {
+    console.error('❌ Ошибка сохранения роли в БД:', {
+      message: error.message || 'Неизвестная ошибка',
+      details: error.details || '',
+      hint: error.hint || '',
+      code: error.code || ''
+    });
+    return { success: false, error };
   }
 }
 
@@ -1111,17 +1156,17 @@ const roleSelectionKeyboard = {
 
 // Показать стартовый экран приветствия (этап 1)
 async function showWelcomeScreen(chatId) {
-  const welcomeText = `*Добро пожаловать в «Голос Стройки»* 👋
+  const welcomeText = `<b>Добро пожаловать в «Голос Стройки»</b> 👋
 Это пространство для тех, кто реально работает в стройке.
 
-👥 *в Сообществе* ты можешь общаться, знакомиться с профессионалами, строителями и заказчиками. Найти поддержку или помочь другим.
+👥 <b>в Сообществе</b> ты можешь общаться, знакомиться с профессионалами, строителями и заказчиками. Найти поддержку или помочь другим.
 
-🗂️ *в Базе* — ты можешь найти работу или нужных специалистов на свой объект
+🗂️ <b>в Базе</b> — ты можешь найти работу или нужных специалистов на свой объект
 
-_Выбери, с чего хочешь начать_ 👇`;
+<i>Выбери, с чего хочешь начать</i> 👇`;
 
   await bot.sendMessage(chatId, welcomeText, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     ...welcomeScreenKeyboard
   });
 }
@@ -1129,21 +1174,21 @@ _Выбери, с чего хочешь начать_ 👇`;
 // Показать экран выбора роли (этап 2)
 async function showRoleSelection(chatId) {
   const roleText = `Привет 👋
-Ты в *Базе сообщества «Голос Стройки»*.
+Ты в <b>Базе сообщества «Голос Стройки»</b>.
 
 Здесь ты можешь:
 — найти работу
 — найти любых специалистов из Базы
 
-_Все анкеты и заявки на поиск людей публикуются
-в сообществе «Голос Стройки»._
+<i>Все анкеты и заявки на поиск людей публикуются
+в сообществе «Голос Стройки».</i>
 
 Выбери свою роль в сообществе, это поможет более точно отвечать на твои запросы 👇
 
-⚠️ _Роль не ограничивает доступ и общение._`;
+⚠️ <i>Роль не ограничивает доступ и общение.</i>`;
 
   await bot.sendMessage(chatId, roleText, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     ...roleSelectionKeyboard
   });
 }
@@ -1174,10 +1219,10 @@ bot.onText(/\/start/, async (msg) => {
 async function showMainMenu(chatId) {
   const menuText = `Здесь ты можешь:
 
-🔨 *Найти работу*
+🔨 <b>Найти работу</b>
 Заполни анкету исполнителя — заказчики найдут тебя сами.
 
-👷 *Найти людей*
+👷 <b>Найти людей</b>
 Найди специалистов через быстрый поиск
 или создай заявку — исполнители сами свяжутся с тобой.
 
@@ -1185,7 +1230,7 @@ async function showMainMenu(chatId) {
 
   // Отправляем сообщение с инлайн-кнопками и сохраняем ID
   const menuMessage = await bot.sendMessage(chatId, menuText, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: '🔎 Ищу работу', callback_data: 'search_work' }],
@@ -1220,15 +1265,15 @@ bot.on('callback_query', async (query) => {
 
     if (!isSubscribed) {
       // Если не подписан - показываем сообщение с просьбой подписаться
-      const subscriptionText = `Чтобы пользоваться *Базой сообщества*,
+      const subscriptionText = `Чтобы пользоваться <b>Базой сообщества</b>,
 нужно быть подписанным на сообщество «Голос Стройки».
 
-_Все анкеты и заявки публикуются именно там._
+<i>Все анкеты и заявки публикуются именно там.</i>
 
 Подпишись на сообщество и возвращайся в бот 👇`;
 
       await bot.sendMessage(chatId, subscriptionText, {
-        parse_mode: 'Markdown',
+        parse_mode: 'HTML',
         ...checkSubscriptionKeyboard,
         disable_web_page_preview: true
       });
@@ -1290,24 +1335,29 @@ _Все анкеты и заявки публикуются именно там.
     else if (data === 'role_expert') selectedRole = 'эксперт';
     else if (data === 'role_observer') selectedRole = 'наблюдатель';
 
-    // Сохраняем роль во временное хранилище userStates
-    if (!userStates[userId]) {
-      userStates[userId] = { data: {} };
-    }
-    userStates[userId].selectedRole = selectedRole;
-
     console.log(`✅ Пользователь ${userId} выбрал роль: ${selectedRole}`);
+
+    // НОВОЕ: Сохраняем роль в БД сразу же (этап 2)
+    const roleResult = await saveUserRole(userId, selectedRole);
 
     // Удаляем сообщение с выбором роли
     await safeDeleteMessage(chatId, query.message.message_id);
 
-    // Показываем подтверждение выбора роли
-    const confirmMsg = await bot.sendMessage(chatId, `✅ Роль выбрана: *${selectedRole}*\n\nРоль будет сохранена после создания первой анкеты или заявки.`, {
-      parse_mode: 'Markdown'
-    });
+    if (roleResult.success) {
+      // Показываем подтверждение выбора роли
+      const confirmMsg = await bot.sendMessage(chatId, `✅ Роль выбрана: <b>${selectedRole}</b>\n\nЭту роль будет учитываться при заполнении анкет.`, {
+        parse_mode: 'HTML'
+      });
 
-    // Удаляем подтверждение через 5 секунд
-    deleteMessageAfterDelay(chatId, confirmMsg.message_id, 5000);
+      // Удаляем подтверждение через 5 секунд
+      deleteMessageAfterDelay(chatId, confirmMsg.message_id, 5000);
+    } else {
+      // Если сохранение роли не удалось
+      const errorMsg = await bot.sendMessage(chatId, '⚠️ Не удалось сохранить роль. Попробуй еще раз.', {
+        parse_mode: 'HTML'
+      });
+      deleteMessageAfterDelay(chatId, errorMsg.message_id, 5000);
+    }
 
     // Переходим к главному меню
     await showMainMenu(chatId);
@@ -1365,7 +1415,7 @@ _Все анкеты и заявки публикуются именно там.
         await bot.editMessageText(formData.trim(), {
           chat_id: chatId,
           message_id: query.message.message_id,
-          parse_mode: 'Markdown',
+          parse_mode: 'HTML',
           reply_markup: { inline_keyboard: [] }
         });
       } catch (error) {
@@ -1386,7 +1436,7 @@ _Все анкеты и заявки публикуются именно там.
       // Редактируем сообщение: убираем кнопки и служебную часть, оставляя только данные заявки
       try {
         const userData = userStates[userId].data;
-        let formText = '📋 *Твоя заявка:*\n\n';
+        let formText = '📋 <b>Твоя заявка:</b>\n\n';
 
         if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
         if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
@@ -1400,7 +1450,7 @@ _Все анкеты и заявки публикуются именно там.
         await bot.editMessageText(formText.trim(), {
           chat_id: chatId,
           message_id: query.message.message_id,
-          parse_mode: 'Markdown',
+          parse_mode: 'HTML',
           reply_markup: { inline_keyboard: [] }
         });
       } catch (error) {
@@ -1721,8 +1771,8 @@ _Все анкеты и заявки публикуются именно там.
 
   if (data === 'search_support') {
     await bot.answerCallbackQuery(query.id);
-    await bot.sendMessage(chatId, '📞 *Поддержка*\n\nНапиши свой вопрос, и мы постараемся помочь.', {
-      parse_mode: 'Markdown',
+    await bot.sendMessage(chatId, '📞 <b>Поддержка</b>\n\nНапиши свой вопрос, и мы постараемся помочь.', {
+      parse_mode: 'HTML',
       ...communityKeyboard
     });
     return;
@@ -1841,10 +1891,10 @@ _Все анкеты и заявки публикуются именно там.
 
 В каком городе ищешь работу?
 
-_Выбери из кнопок или напиши свой город_`;
+<i>Выбери из кнопок или напиши свой город</i>`;
 
     const cityPromptMsg = await bot.sendMessage(chatId, cityText, {
-      parse_mode: 'Markdown',
+      parse_mode: 'HTML',
       reply_markup: {
         inline_keyboard: [
           [{ text: 'Москва', callback_data: 'quick_search_city_Москва' }],
@@ -1918,7 +1968,7 @@ _Выбери из кнопок или напиши свой город_`;
     searchStates[userId].step = 'waiting_query';
 
     // Показываем форму описания работы (Шаг 2)
-    const searchText = `*Шаг 2 из 2* — Описание работы
+    const searchText = `Шаг 2 из 2 — Описание работы
 
 Напишите вашу специальность, профессию или опишите род деятельности.`;
 
@@ -2034,10 +2084,10 @@ _Выбери из кнопок или напиши свой город_`;
       return;
     }
 
-    const confirmText = `Ты можешь создать до *2 активных заявок* на поиск специалистов.
+    const confirmText = `Ты можешь создать до <b>2 активных заявок</b> на поиск специалистов.
 
 Заявка будет опубликована в сообществе «Голос Стройки».
-_Контакты будут доступны специалистам только через Базу._`;
+<i>Контакты будут доступны специалистам только через Базу.</i>`;
 
     await bot.sendMessage(chatId, confirmText, {
       reply_markup: {
@@ -2060,10 +2110,10 @@ _Контакты будут доступны специалистам толь�
 
 В каком городе ищешь специалистов?
 
-_Выбери из кнопок или напиши свой город_`;
+<i>Выбери из кнопок или напиши свой город</i>`;
 
     const cityPromptMsg = await bot.sendMessage(chatId, cityText, {
-      parse_mode: 'Markdown',
+      parse_mode: 'HTML',
       reply_markup: {
         inline_keyboard: [
           [{ text: 'Москва', callback_data: 'quick_search_contractors_city_Москва' }],
@@ -2198,10 +2248,11 @@ _Выбери из кнопок или напиши свой город_`;
       .from('orders')
       .select('*')
       .eq('telegram_id', userId)
+      .neq('status', 'expired')
       .order('created_at', { ascending: false });
 
     if (!orderProfiles || orderProfiles.length === 0) {
-      await bot.sendMessage(chatId, '❌ У тебя нет заявок.', {
+      await bot.sendMessage(chatId, '❌ У тебя нет активных заявок.', {
         reply_markup: {
           inline_keyboard: [
             [{ text: '🏠 В меню', callback_data: 'main_menu' }]
@@ -2421,8 +2472,8 @@ _Выбери из кнопок или напиши свой город_`;
     // Инициализируем состояние жалобы
     complaintStates[userId] = { active: true };
 
-    const complaintMsg = await bot.sendMessage(chatId, '📝 Напиши свою жалобу, и мы её рассмотрим.\n\n_Минимум 10 символов_', {
-      parse_mode: 'Markdown',
+    const complaintMsg = await bot.sendMessage(chatId, '📝 Напиши свою жалобу, и мы её рассмотрим.\n\n<i>Минимум 10 символов</i>', {
+      parse_mode: 'HTML',
       reply_markup: {
         inline_keyboard: [
           [{ text: '◀️ Назад', callback_data: 'complaint_back' }]
@@ -2500,14 +2551,14 @@ async function startSearchProcess(chatId, userId) {
     workType: null
   };
 
-  const text = `🏙 *Поиск подрядчика*
+  const text = `🏙 <b>Поиск подрядчика</b>
 
 Напиши город, в котором ищешь подрядчика:
 
-_Например: Москва, Санкт-Петербург, Казань_`;
+<i>Например: Москва, Санкт-Петербург, Казань</i>`;
 
   await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       keyboard: [
         [{ text: '❌ Отменить поиск' }]
@@ -2518,14 +2569,14 @@ _Например: Москва, Санкт-Петербург, Казань_`;
 }
 
 async function askWorkType(chatId, userId) {
-  const text = `🔧 *Какой тип работ нужен?*
+  const text = `🔧 <b>Какой тип работ нужен?</b>
 
 Опиши, какие работы нужно выполнить:
 
-_Например: отделка квартиры, укладка плитки, малярные работы_`;
+<i>Например: отделка квартиры, укладка плитки, малярные работы</i>`;
 
   await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       keyboard: [
         [{ text: '❌ Отменить поиск' }]
@@ -2560,9 +2611,9 @@ async function performSearch(chatId, userId) {
     if (!contractors || contractors.length === 0) {
       await bot.sendMessage(
         chatId,
-        `😔 К сожалению, по запросу *"${searchData.workType}"* в городе *"${searchData.city}"* подрядчики не найдены.\n\nПопробуй изменить параметры поиска.`,
+        `😔 К сожалению, по запросу <b>"${searchData.workType}"</b> в городе <b>"${searchData.city}"</b> подрядчики не найдены.\n\nПопробуй изменить параметры поиска.`,
         {
-          parse_mode: 'Markdown',
+          parse_mode: 'HTML',
           reply_markup: {
             inline_keyboard: [
               [{ text: '🔄 Новый поиск', callback_data: 'search_back' }]
@@ -2608,17 +2659,17 @@ async function showSearchResults(chatId, userId, offset) {
 
   // Заголовок с количеством найденных
   const headerText = offset === 0
-    ? `🎯 По вашему запросу найдено *${totalCount}* ${totalCount === 1 ? 'специалист' : totalCount < 5 ? 'специалиста' : 'специалистов'}.\n\nВот ${contractors.length === 1 ? 'первый' : `первые ${contractors.length}`}:`
+    ? `🎯 По вашему запросу найдено <b>${totalCount}</b> ${totalCount === 1 ? 'специалист' : totalCount < 5 ? 'специалиста' : 'специалистов'}.\n\nВот ${contractors.length === 1 ? 'первый' : `первые ${contractors.length}`}:`
     : `📄 Показываю еще ${contractors.length} ${contractors.length === 1 ? 'специалиста' : 'специалистов'}:`;
 
-  await bot.sendMessage(chatId, headerText, { parse_mode: 'Markdown' });
+  await bot.sendMessage(chatId, headerText, { parse_mode: 'HTML' });
 
   // Отправляем карточки подрядчиков
   for (const contractor of contractors) {
     const cardText = formatContractorCard(contractor);
 
     // Отправляем только текст анкеты (фото не отображаются)
-    await bot.sendMessage(chatId, cardText, { parse_mode: 'Markdown' });
+    await bot.sendMessage(chatId, cardText, { parse_mode: 'HTML' });
   }
 
   // Кнопки навигации
@@ -2640,42 +2691,50 @@ async function showSearchResults(chatId, userId, offset) {
 
 function formatContractorCard(contractor) {
   const tripsText = contractor.ready_for_trips ? ' — готов к командировкам' : '';
-  const advantages = contractor.professional_advantages || 'не указано';
+  const advantages = contractor.professional_advantages || '';
 
   // Убираем дубль @ если telegram_tag уже содержит @
   const telegramTag = contractor.telegram_tag ?
     (contractor.telegram_tag.startsWith('@') ? contractor.telegram_tag : `@${contractor.telegram_tag}`) :
     'не указан';
 
-  return `━━━━━━━━━━━━━━━━━━━━━━━
-👤 <b>${contractor.name}</b> | ${contractor.category}
-📂 <b>Формат работы:</b> ${contractor.work_format}
-📍 <b>Город:</b> ${contractor.city}${tripsText}
+  return `<b>${contractor.specialization}</b>
 
-🔧 <b>Специализация:</b> ${contractor.specialization} | ⏱ <b>Опыт:</b> ${contractor.experience}
-🏗 <b>Задачи и объекты:</b> ${contractor.objects_worked}
-${advantages !== 'не указано' ? `⭐️ <b>Преимущества:</b> ${advantages}\n` : ''}📋 <b>Формат сотрудничества:</b> ${contractor.cooperation_format}
+${contractor.name} | ${contractor.category}
+━━━━━━━━━━━━━━━━━━━━━━━
 
-📞 ${contractor.contact} | ${telegramTag}
-━━━━━━━━━━━━━━━━━━━━━━━`;
+🔧 <b><u>Специализация:</u></b> ${contractor.specialization}
+💼 <b><u>Формат работы:</u></b> ${contractor.work_format}
+📍 <b><u>Город / регион:</u></b> ${contractor.city}${tripsText}
+⏱ <b><u>Опыт:</u></b> ${contractor.experience}
+🏗 <b><u>Задачи / объекты:</u></b> ${contractor.objects_worked}
+${advantages ? `⭐️ <b><u>Преимущества:</u></b> ${advantages}\n` : ''}📋 <b><u>Оформление:</u></b> ${contractor.cooperation_format}
+
+━━━━━━━━━━━━━━━━━━━━━━━
+📞 ${contractor.contact} | ${telegramTag}`;
 }
 
 function formatOrderCard(order) {
-  const requirements = order.executor_requirements || 'не указано';
+  const requirements = order.executor_requirements || '';
 
   // Убираем дубль @ если telegram_tag уже содержит @
   const telegramTag = order.telegram_tag ?
     (order.telegram_tag.startsWith('@') ? order.telegram_tag : `@${order.telegram_tag}`) :
     'не указан';
 
-  return `━━━━━━━━━━━━━━━━━━━━━━━
-🔍 <b>${order.category}</b> | 🏢 ${order.company_name}
-📍 <b>Город / объект:</b> ${order.city_location}
-⏰ <b>Актуальность:</b> ${order.validity_period}
+  return `<b>${order.category}</b>
 
-📝 <b>Задача:</b> ${order.work_type}
-${requirements !== 'не указано' ? `✅ <b>Требования:</b> ${requirements}\n` : ''}📞 ${order.contact} | ${telegramTag}
-━━━━━━━━━━━━━━━━━━━━━━━`;
+${order.company_name}
+━━━━━━━━━━━━━━━━━━━━━━━
+
+🔍 <b><u>Ищут специалиста:</u></b> ${order.category}
+🏢 <b><u>Заказчик:</u></b> ${order.company_name}
+📍 <b><u>Город / объект:</u></b> ${order.city_location}
+⏰ <b><u>Актуальность:</u></b> ${order.validity_period}
+
+📝 <b><u>Задача:</u></b> ${order.work_type}
+${requirements ? `✅ <b><u>Требования:</u></b> ${requirements}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━
+📞 ${order.contact} | ${telegramTag}`;
 }
 
 // Функция показа карточек заявок (для специалистов)
@@ -2812,7 +2871,7 @@ async function startOrderFormProcess(chatId, userId, username) {
 
 // Шаг 1 - Формат работы (специалист/бригада/компания)
 async function askStep1(chatId, userId) {
-  const text = `*Шаг 1 из 11* — Формат работы
+  const text = `Шаг 1 из 11 — Формат работы
 
 Вы работаете как:`;
 
@@ -2827,7 +2886,7 @@ async function askStep1(chatId, userId) {
 
   // Отправляем основное сообщение с инлайн-кнопками
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: 'Специалист', callback_data: 'wf_specialist' }],
@@ -2848,7 +2907,7 @@ async function askStep2(chatId, userId) {
   const userData = userStates[userId].data;
   const formData = formatCurrentFormData(userData, 2);
 
-  const text = `${formData}*Шаг 2 из 11* — Специализация
+  const text = `${formData}Шаг 2 из 11 — Специализация
 
 Напиши свою основную специализацию.`;
 
@@ -2863,7 +2922,7 @@ async function askStep2(chatId, userId) {
 
   // Отправляем основное сообщение с инлайн-кнопками
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: '◀️ Назад', callback_data: 'form_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
@@ -2885,12 +2944,12 @@ async function askStep3(chatId, userId) {
   const readyForTrips = userData.readyForTrips || false;
   const tripsToggle = readyForTrips ? '✅ ГОТОВ К КОМАНДИРОВКАМ' : '☐ ГОТОВ К КОМАНДИРОВКАМ';
 
-  const text = `${formData}*Шаг 3 из 11* — Город/регион
+  const text = `${formData}Шаг 3 из 11 — Город/регион
 
 Напиши, в каком городе ты работаешь,
 или выбери из кнопок ниже.
 
-*Также отметь, готов ли ты к командировкам.*`;
+Также отметь, готов ли ты к командировкам.`;
 
   // Удаляем предыдущее сообщение шага если оно есть
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
@@ -2903,7 +2962,7 @@ async function askStep3(chatId, userId) {
 
   // Отправляем основное сообщение с инлайн-кнопками
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: tripsToggle, callback_data: 'toggle_trips' }],
@@ -2924,7 +2983,7 @@ async function askStep4(chatId, userId) {
   const userData = userStates[userId].data;
   const formData = formatCurrentFormData(userData, 4);
 
-  const text = `${formData}*Шаг 4 из 11* — Имя
+  const text = `${formData}Шаг 4 из 11 — Имя
 
 Напиши, как к тебе обращаться.`;
 
@@ -2939,7 +2998,7 @@ async function askStep4(chatId, userId) {
 
   // Отправляем основное сообщение с инлайн-кнопками
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: '◀️ Назад', callback_data: 'form_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
@@ -2957,7 +3016,7 @@ async function askStep5(chatId, userId) {
   const userData = userStates[userId].data;
   const formData = formatCurrentFormData(userData, 5);
 
-  const text = `${formData}*Шаг 5 из 11* — Опыт работы
+  const text = `${formData}Шаг 5 из 11 — Опыт работы
 
 Укажи свой опыт работы в этой сфере.`;
 
@@ -2972,7 +3031,7 @@ async function askStep5(chatId, userId) {
 
   // Отправляем основное сообщение с инлайн-кнопками
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: 'Менее 1 года', callback_data: 'exp_less1' }, { text: '1-3 года', callback_data: 'exp_1_3' }],
@@ -2993,18 +3052,18 @@ async function askStep6(chatId, userId) {
   const userData = userStates[userId].data;
   const formData = formatCurrentFormData(userData, 6);
 
-  const text = `${formData}*Шаг 6 из 11* — Задачи и объекты
+  const text = `${formData}Шаг 6 из 11 — Задачи и объекты
 
 Опиши, с какими задачами и объектами ты работаешь.
 
-_Можно:_
+<i>Можно:</i>
 — написать текстом
 — или отправить голосовое сообщение
 
 Я приведу информацию в аккуратный и понятный вид.
 
-_Пример:_
-_«Отделка квартир под ключ, санузлы, кухни. Объекты 50–120 м².»_`;
+<i>Пример:</i>
+<i>«Отделка квартир под ключ, санузлы, кухни. Объекты 50–120 м².»</i>`;
 
   // Удаляем предыдущее сообщение шага если оно есть
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
@@ -3017,7 +3076,7 @@ _«Отделка квартир под ключ, санузлы, кухни. О
 
   // Отправляем основное сообщение с инлайн-кнопками
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: '◀️ Назад', callback_data: 'form_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
@@ -3035,7 +3094,7 @@ async function askStep7(chatId, userId) {
   const userData = userStates[userId].data;
   const formData = formatCurrentFormData(userData, 7);
 
-  const text = `${formData}*Шаг 7 из 11* — Профессиональные преимущества
+  const text = `${formData}Шаг 7 из 11 — Профессиональные преимущества
 
 Если хочешь, укажи профессиональные преимущества.
 
@@ -3046,12 +3105,12 @@ async function askStep7(chatId, userId) {
 — опыт на сложных объектах
 — собственная команда или оборудование
 
-_Можно написать текстом
+<i>Можно написать текстом
 или отправить голосовое сообщение —
-я приведу его в аккуратный и понятный вид._
+я приведу его в аккуратный и понятный вид.</i>
 
-_Пример:_
-_«Опыт работы с коммерческими объектами, допуск к высотным работам.»_`;
+<i>Пример:</i>
+<i>«Опыт работы с коммерческими объектами, допуск к высотным работам.»</i>`;
 
   // Удаляем предыдущее сообщение шага если оно есть
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
@@ -3064,7 +3123,7 @@ _«Опыт работы с коммерческими объектами, до�
 
   // Отправляем основное сообщение с инлайн-кнопками
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: '⏭ Пропустить', callback_data: 'skip_advantages' }],
@@ -3083,7 +3142,7 @@ async function askStep8(chatId, userId) {
   const userData = userStates[userId].data;
   const formData = formatCurrentFormData(userData, 8);
 
-  const text = `${formData}*Шаг 8 из 11* — Формат сотрудничества
+  const text = `${formData}Шаг 8 из 11 — Формат сотрудничества
 
 Укажи, в каком формате ты работаешь.
 
@@ -3101,7 +3160,7 @@ _Это поможет заказчикам понять,
 
   // Отправляем основное сообщение с инлайн-кнопками
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: 'ИП', callback_data: 'coop_ip' }],
@@ -3125,11 +3184,11 @@ async function askStep9(chatId, userId) {
   const userData = userStates[userId].data;
   const formData = formatCurrentFormData(userData, 9);
 
-  const text = `${formData}💰 *Шаг 9 из 11* — Условия оплаты
+  const text = `${formData}💰 Шаг 9 из 11 — Условия оплаты
 
 Как принимаешь оплату?
 
-_Выбери из кнопок или напиши свой вариант_`;
+<i>Выбери из кнопок или напиши свой вариант</i>`;
 
   // Удаляем предыдущее сообщение шага если оно есть
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
@@ -3142,7 +3201,7 @@ _Выбери из кнопок или напиши свой вариант_`;
 
   // Отправляем основное сообщение с инлайн-кнопками
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: 'Нал', callback_data: 'payment_cash' }],
@@ -3163,12 +3222,12 @@ async function askStep10(chatId, userId) {
   const userData = userStates[userId].data;
   const formData = formatCurrentFormData(userData, 10);
 
-  const text = `${formData}*Шаг 10 из 11* — Контакты
+  const text = `${formData}Шаг 10 из 11 — Контакты
 
 Укажи контактный номер телефона,
 по которому заказчики смогут с тобой связаться.
 
-_Ты можешь:_
+<i>Ты можешь:</i>
 — написать номер вручную
 — или нажать кнопку ниже, чтобы поделиться контактом`;
 
@@ -3183,7 +3242,7 @@ _Ты можешь:_
 
   // Отправляем основное сообщение с обычной клавиатурой
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       keyboard: [
         [{ text: '📱 Поделиться контактом', request_contact: true }],
@@ -3204,14 +3263,14 @@ async function askStep11(chatId, userId) {
   const userData = userStates[userId].data;
   const formData = formatCurrentFormData(userData, 11);
 
-  const text = `${formData}*Шаг 11 из 11* — Портфолио
+  const text = `${formData}Шаг 11 из 11 — Портфолио
 
-Добавь фото или видео своих работ _(до 6 шт.)_.
+Добавь фото или видео своих работ <i>(до 6 шт.)</i>.
 
 Это поможет заказчикам быстрее понять твой уровень
 и ускорит поиск работы.
 
-_Можно пропустить._`;
+<i>Можно пропустить.</i>`;
 
   // Удаляем предыдущее сообщение шага если оно есть
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
@@ -3234,7 +3293,7 @@ _Можно пропустить._`;
 
   // Отправляем основное сообщение с инлайн-кнопками
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: buttonText, callback_data: 'confirm_form' }],
@@ -3252,6 +3311,9 @@ _Можно пропустить._`;
 // Завершение анкеты
 async function finishForm(chatId, userId, telegramUsername) {
   const userData = userStates[userId];
+
+  // НОВОЕ: Получаем роль из БД вместо временного хранилища
+  const userRole = await checkUserRole(userId);
 
   // Сохраняем в базу данных (этап 5: добавлена категория)
   const result = await saveContractorToDatabase({
@@ -3272,15 +3334,15 @@ async function finishForm(chatId, userId, telegramUsername) {
     portfolio: userData.data.portfolio || [], // Весь массив фотографий портфолио
     telegramTag: telegramUsername ? `@${telegramUsername}` : null,
     category: userData.data.category || null, // этап 5: AI-определенная категория
-    role: userData.selectedRole || null // этап 2: передаем роль из userStates
+    role: userRole || null // этап 2: получаем роль из таблицы user_roles
   });
 
   if (result.success) {
-    const successText = `*Готово* ✅
+    const successText = `Готово ✅
 Твоя анкета добавлена в Базу сообщества
 и опубликована в сообществе «Голос Стройки».
 
-*Теперь:*
+Теперь:
 — заказчики могут находить тебя в Базе
 — ты можешь смотреть актуальные предложения по своей специализации`;
 
@@ -3305,6 +3367,9 @@ async function finishForm(chatId, userId, telegramUsername) {
 async function finishOrderForm(chatId, userId) {
   const userData = userStates[userId];
 
+  // НОВОЕ: Получаем роль из БД вместо временного хранилища
+  const userRole = await checkUserRole(userId);
+
   // Сохраняем в базу данных (этап 5: добавлена категория)
   const result = await saveOrderToDatabase({
     userId,
@@ -3319,11 +3384,11 @@ async function finishOrderForm(chatId, userId) {
     contact: userData.data.contact,
     telegramTag: userData.data.telegramTag,
     category: userData.data.category || null, // этап 5: AI-определенная категория
-    role: userData.selectedRole || null // этап 2: передаем роль из userStates
+    role: userRole || null // этап 2: получаем роль из таблицы user_roles
   });
 
   if (result.success) {
-    const successText = `*Готово* ✅
+    const successText = `Готово ✅
 Твоя заявка опубликована в сообществе «Голос Стройки».
 
 Специалисты будут находить её в Базе и связываться с тобой напрямую.`;
@@ -3364,11 +3429,11 @@ async function finishOrderForm(chatId, userId) {
 
 // Шаг 1 Order - Тип запроса
 async function askOrderStep1(chatId, userId) {
-  const text = `👷 *Шаг 1 из 9* — Кого ты ищешь?
+  const text = `👷 Шаг 1 из 9 — Кого ты ищешь?
 
 Напиши специализацию своими словами.
 
-_Пример: "Монтажник вент. фасадов" или "Бригада каменщиков"_`;
+<i>Пример: "Монтажник вент. фасадов" или "Бригада каменщиков"</i>`;
 
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
     try {
@@ -3377,7 +3442,7 @@ _Пример: "Монтажник вент. фасадов" или "Брига�
   }
 
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: '❌ Отменить', callback_data: 'cancel_form' }]
@@ -3392,13 +3457,13 @@ _Пример: "Монтажник вент. фасадов" или "Брига�
 // Шаг 2 Order - Город и локация объекта
 async function askOrderStep2(chatId, userId) {
   const userData = userStates[userId].data;
-  let formText = '📋 *Твоя заявка:*\n\n';
+  let formText = '📋 <b>Твоя заявка:</b>\n\n';
 
   if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}*Шаг 2 из 9* — Город и локация объекта
+  const text = `${formText}Шаг 2 из 9 — Город и локация объекта
 
 Напиши город, в котором нужно выполнить работу,
 или выбери из кнопок ниже.`;
@@ -3410,7 +3475,7 @@ async function askOrderStep2(chatId, userId) {
   }
 
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: 'Москва', callback_data: 'ord_city_moscow' }],
@@ -3427,14 +3492,14 @@ async function askOrderStep2(chatId, userId) {
 // Шаг 3 Order - Тип объекта
 async function askOrderStep3(chatId, userId) {
   const userData = userStates[userId].data;
-  let formText = '📋 *Твоя заявка:*\n\n';
+  let formText = '📋 <b>Твоя заявка:</b>\n\n';
 
   if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
   if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}*Шаг 3 из 9* — Тип объекта
+  const text = `${formText}Шаг 3 из 9 — Тип объекта
 
 На каком объекте нужно выполнить работу?
 Напиши свой вариант или выбери из списка.`;
@@ -3446,7 +3511,7 @@ async function askOrderStep3(chatId, userId) {
   }
 
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: 'Квартира', callback_data: 'ord_obj_apartment' }],
@@ -3466,7 +3531,7 @@ async function askOrderStep3(chatId, userId) {
 // Шаг 4 Order - Описание задачи (объединено: работы + объём)
 async function askOrderStep4(chatId, userId) {
   const userData = userStates[userId].data;
-  let formText = '📋 *Твоя заявка:*\n\n';
+  let formText = '📋 <b>Твоя заявка:</b>\n\n';
 
   if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
   if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
@@ -3474,7 +3539,7 @@ async function askOrderStep4(chatId, userId) {
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}📝 *Шаг 4 из 9* — Описание задачи
+  const text = `${formText}📝 Шаг 4 из 9 — Описание задачи
 
 Опиши задачу.
 Что нужно сделать?
@@ -3483,9 +3548,9 @@ async function askOrderStep4(chatId, userId) {
 
 Можно написать или записать голосовое.
 
-_Пример:_
-_«Нужно уложить плитку в санузле, стены и пол._
-_Площадь около 20 м², нужен 1 человек.»_`;
+<i>Пример:</i>
+<i>«Нужно уложить плитку в санузле, стены и пол.
+Площадь около 20 м², нужен 1 человек.»</i>`;
 
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
     try {
@@ -3494,7 +3559,7 @@ _Площадь около 20 м², нужен 1 человек.»_`;
   }
 
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: '◀️ Назад', callback_data: 'order_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
@@ -3509,7 +3574,7 @@ _Площадь около 20 м², нужен 1 человек.»_`;
 // Шаг 5 Order - Требования к исполнителю (было шаг 6, добавлена кнопка "Пропустить")
 async function askOrderStep5(chatId, userId) {
   const userData = userStates[userId].data;
-  let formText = '📋 *Твоя заявка:*\n\n';
+  let formText = '📋 <b>Твоя заявка:</b>\n\n';
 
   if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
   if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
@@ -3518,7 +3583,7 @@ async function askOrderStep5(chatId, userId) {
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}👤 *Шаг 5 из 9* — Требования к исполнителю
+  const text = `${formText}👤 Шаг 5 из 9 — Требования к исполнителю
 
 Если есть особые требования — укажи их здесь.
 Например: опыт, собственное оборудование, допуски, квалификации.
@@ -3532,7 +3597,7 @@ async function askOrderStep5(chatId, userId) {
   }
 
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: '⏭ Пропустить', callback_data: 'skip_order_requirements' }],
@@ -3548,7 +3613,7 @@ async function askOrderStep5(chatId, userId) {
 // Шаг 6 Order - Срок актуальности (НОВЫЙ ШАГ)
 async function askOrderStep6(chatId, userId) {
   const userData = userStates[userId].data;
-  let formText = '📋 *Твоя заявка:*\n\n';
+  let formText = '📋 <b>Твоя заявка:</b>\n\n';
 
   if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
   if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
@@ -3558,7 +3623,7 @@ async function askOrderStep6(chatId, userId) {
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}⏰ *Шаг 6 из 9* — Срок актуальности
+  const text = `${formText}⏰ Шаг 6 из 9 — Срок актуальности
 
 Сколько дней заявка актуальна? По истечению срока заявка скроется и откликов не будет.
 
@@ -3571,7 +3636,7 @@ async function askOrderStep6(chatId, userId) {
   }
 
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: '7 дней', callback_data: 'ord_validity_7' }],
@@ -3589,7 +3654,7 @@ async function askOrderStep6(chatId, userId) {
 // Шаг 7 Order - Имя или название компании (НОВЫЙ ШАГ)
 async function askOrderStep7(chatId, userId) {
   const userData = userStates[userId].data;
-  let formText = '📋 *Твоя заявка:*\n\n';
+  let formText = '📋 <b>Твоя заявка:</b>\n\n';
 
   if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
   if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
@@ -3600,13 +3665,13 @@ async function askOrderStep7(chatId, userId) {
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}👤 *Шаг 7 из 9* — Имя или название компании
+  const text = `${formText}👤 Шаг 7 из 9 — Имя или название компании
 
 Напиши имя или название компании —
 это будет видно специалистам.
 
-_Примеры:_
-_"Иван" или "ООО Стройпроект"_`;
+<i>Примеры:</i>
+<i>"Иван" или "ООО Стройпроект"</i>`;
 
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
     try {
@@ -3615,7 +3680,7 @@ _"Иван" или "ООО Стройпроект"_`;
   }
 
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: '◀️ Назад', callback_data: 'order_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
@@ -3630,7 +3695,7 @@ _"Иван" или "ООО Стройпроект"_`;
 // Шаг 8 Order - Контактный номер телефона
 async function askOrderStep8(chatId, userId) {
   const userData = userStates[userId].data;
-  let formText = '📋 *Твоя заявка:*\n\n';
+  let formText = '📋 <b>Твоя заявка:</b>\n\n';
 
   if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
   if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
@@ -3642,7 +3707,7 @@ async function askOrderStep8(chatId, userId) {
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}*Шаг 8 из 9* — Контактный номер телефона
+  const text = `${formText}Шаг 8 из 9 — Контактный номер телефона
 
 Напиши контактный телефон
 или нажми кнопку «Поделиться контактом».
@@ -3657,7 +3722,7 @@ _Контакты будут доступны специалистам
   }
 
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       keyboard: [
         [{ text: '📱 Поделиться контактом', request_contact: true }],
@@ -3675,7 +3740,7 @@ _Контакты будут доступны специалистам
 // Шаг 9 Order - Финальное согласование (проверка данных)
 async function askOrderStep9(chatId, userId) {
   const userData = userStates[userId].data;
-  let formText = '📋 *Твоя заявка:*\n\n';
+  let formText = '📋 <b>Твоя заявка:</b>\n\n';
 
   if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
   if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
@@ -3688,13 +3753,13 @@ async function askOrderStep9(chatId, userId) {
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}*Шаг 9 из 9* — Проверка заявки
+  const text = `${formText}Шаг 9 из 9 — Проверка заявки
 
-*Проверь заявку перед публикацией:*
+<b>Проверь заявку перед публикацией:</b>
 
 ${formText}
 Заявка будет опубликована в сообществе «Голос Стройки».
-_Специалисты смогут связаться с тобой через Базу._`;
+<i>Специалисты смогут связаться с тобой через Базу.</i>`;
 
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
     try {
@@ -3703,7 +3768,7 @@ _Специалисты смогут связаться с тобой через
   }
 
   const msg = await bot.sendMessage(chatId, text, {
-    parse_mode: 'Markdown',
+    parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
         [{ text: '✅ Подтвердить', callback_data: 'confirm_order_form' }],
@@ -3773,10 +3838,10 @@ bot.on('message', async (msg) => {
       const dateStr = `${day} ${month} ${year}`;
 
       await bot.sendMessage(chatId,
-`✅ *Жалоба принята*
+`✅ <b>Жалоба принята</b>
 
 📝 Текст жалобы:
-_${text.trim()}_
+<i>${text.trim()}</i>
 
 📅 Дата: ${dateStr}
 
@@ -3784,7 +3849,7 @@ _${text.trim()}_
 
 Спасибо за обратную связь!`,
         {
-          parse_mode: 'Markdown',
+          parse_mode: 'HTML',
           ...mainMenuKeyboard
         }
       );

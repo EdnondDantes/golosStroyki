@@ -6,7 +6,8 @@
       "Bash(findstr:*)",
       "Bash(taskkill:*)",
       "Bash(wmic process where \"name=''node.exe''\" delete)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(ls:*)"
     ]
   }
 }
