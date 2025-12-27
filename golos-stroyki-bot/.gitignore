@@ -1,4 +1,4 @@
 
 .env copy
 .env
-# package-lock.json
+package-lock.json
