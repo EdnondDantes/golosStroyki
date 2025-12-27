@@ -2628,6 +2628,7 @@ bot.on('callback_query', async (query) => {
     // Отправляем только текст анкеты с кнопками (фото не отображаются)
     await bot.sendMessage(chatId, fullText, {
       parse_mode: 'HTML',
+      disable_web_page_preview: true,
       reply_markup: {
         inline_keyboard: buttons
       }
@@ -2984,7 +2985,7 @@ async function showSearchResults(chatId, userId, offset) {
     const cardText = formatContractorCard(contractor, userRole);
 
     // Отправляем только текст анкеты (фото не отображаются)
-    await bot.sendMessage(chatId, cardText, { parse_mode: 'HTML' });
+    await bot.sendMessage(chatId, cardText, { parse_mode: 'HTML', disable_web_page_preview: true });
   }
 
   // Кнопки навигации
@@ -3290,6 +3291,7 @@ async function showOrderCards(chatId, userId, currentIndex) {
 
   await bot.sendMessage(chatId, cardText, {
     parse_mode: 'HTML',
+    disable_web_page_preview: true,
     reply_markup: {
       inline_keyboard: buttons
     }
@@ -3343,6 +3345,7 @@ async function showContractorCards(chatId, userId, currentIndex) {
   // Отправляем только текст анкеты с кнопками (фото не отображаются)
   await bot.sendMessage(chatId, cardText, {
     parse_mode: 'HTML',
+    disable_web_page_preview: true,
     reply_markup: {
       inline_keyboard: buttons
     }
