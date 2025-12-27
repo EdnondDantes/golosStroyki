@@ -5,7 +5,7 @@ const { createClient } = require('@supabase/supabase-js');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const { CATEGORIES } = require('./categories'); // Этап 5: AI-определение категории
+const { CATEGORIES, CATEGORY_TO_WORK_AREA } = require('./categories'); // Этап 5: AI-определение категории
 
 // ==================== КОНФИГУРАЦИЯ ====================
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -630,6 +630,35 @@ async function processCityWithDeepseek(text) {
   }
 }
 
+// Функция определения области работ по категории
+function getWorkAreaByCategory(category) {
+  if (!category) return null;
+  return CATEGORY_TO_WORK_AREA[category] || null;
+}
+
+// Функция определения эмодзи по роли
+function getRoleEmoji(role) {
+  if (!role) return '';
+
+  const roleEmojiMap = {
+    'специалист': '👷',
+    'бригадир': '👨‍🔧',
+    'прораб': '👨‍💼',
+    'мастер': '🔧',
+    'инженер': '👨‍🔬',
+    'заказчик': '🏢',
+    'генподрядчик': '🏗️',
+    'субподрядчик': '🔨',
+    'директор': '💼',
+    'собственник': '👔'
+  };
+
+  const roleLower = role.toLowerCase().trim();
+  const emoji = roleEmojiMap[roleLower] || '🧠';
+
+  return `\n${emoji} [${role}]`;
+}
+
 // Этап 5: AI-определение категории из списка 275 позиций
 async function determineCategoryWithAI(text, workFormat) {
   try {
@@ -1179,6 +1208,7 @@ async function saveContractorToDatabase(data) {
           portfolio_photos: data.portfolio || [], // Сохраняем весь массив фотографий портфолио
           telegram_tag: data.telegramTag,
           category: data.category || null, // этап 5: AI-определенная категория
+          work_area: data.workArea || null, // Область работ на основе категории
           role: data.role || null, // этап 2: сохраняем роль
           hook: data.hook || null, // Сохраняем хук
           status: 'approved', // одобрено
@@ -1285,6 +1315,7 @@ async function saveOrderToDatabase(data) {
           contact: data.contact,
           telegram_tag: data.telegramTag,
           category: data.category || null, // этап 5: AI-определенная категория
+          work_area: data.workArea || null, // Область работ на основе категории
           role: data.role || null, // этап 2: сохраняем роль
           hook: data.hook || null, // Сохраняем хук
           status: 'approved',
@@ -1316,9 +1347,7 @@ async function saveOrderToDatabase(data) {
 
 const communityKeyboard = {
   reply_markup: {
-    keyboard: [
-      [{ text: '💬 Сообщество Голос Стройки' }]
-    ],
+    keyboard: [],
     resize_keyboard: true
   }
 };
@@ -2984,36 +3013,28 @@ function formatContractorCard(contractor, userRole = null) {
     (contractor.telegram_tag.startsWith('@') ? contractor.telegram_tag : `@${contractor.telegram_tag}`) :
     'не указан';
 
-  // Формируем роль эмодзи (если роль передана)
-  const roleEmoji = userRole ? `\n🧠 [${userRole}]` : '';
+  // Формируем роль с эмодзи (если роль передана)
+  const roleEmoji = getRoleEmoji(userRole);
 
-  // Используем хук вместо specialization, если он есть
-  const displayHook = contractor.hook || contractor.specialization;
+  // Используем область работ вместо категории
+  const displayWorkArea = contractor.work_area || contractor.category || contractor.specialization;
 
-  // Формируем ссылку на портфолио (только если есть фото И опубликовано в канале)
-  let portfolioLink = '';
-  if (contractor.portfolio_photos &&
-      contractor.portfolio_photos.length > 0 &&
-      contractor.channel_post_id) {
-    const channelLink = `https://t.me/${COMMUNITY_CHANNEL_NAME}/${contractor.channel_post_id}`;
-    portfolioLink = `\n🖼 <b><u>Портфолио:</u></b> <a href="${channelLink}">смотреть в сообществе</a>`;
-  }
+  // Хук (если есть)
+  const hookLine = contractor.hook ? `${contractor.hook}\n\n` : '';
 
   return `📊 <b>ИЩЕТ РАБОТУ</b>
-━━━━━━━━━━━━━━━━━━━━━━━
-${displayHook}
-
-${contractor.name} | ${contractor.category}${roleEmoji}
-━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━
+${hookLine}${contractor.name} | ${displayWorkArea}${roleEmoji}
+━━━━━━━━━━━
 
 🔧 <b><u>Специализация:</u></b> ${contractor.specialization}
 💼 <b><u>Формат работы:</u></b> ${contractor.work_format}
 📍 <b><u>Город / регион:</u></b> ${contractor.city}${tripsText}
 ⏱ <b><u>Опыт:</u></b> ${contractor.experience}
 🏗 <b><u>Задачи / объекты:</u></b> ${contractor.objects_worked}
-${advantages ? `⭐️ <b><u>Преимущества:</u></b> ${advantages}\n` : ''}📋 <b><u>Оформление:</u></b> ${contractor.cooperation_format}${portfolioLink}
+${advantages ? `⭐️ <b><u>Преимущества:</u></b> ${advantages}\n` : ''}📋 <b><u>Оформление:</u></b> ${contractor.cooperation_format}
 
-━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━
 📞 ${contractor.contact} | ${telegramTag}`;
 }
 
@@ -3025,22 +3046,26 @@ function formatOrderCard(order, companyRole = null) {
     (order.telegram_tag.startsWith('@') ? order.telegram_tag : `@${order.telegram_tag}`) :
     'не указан';
 
-  // Формируем роль эмодзи (если роль передана)
-  const roleEmoji = companyRole ? `\n🏗️ [${companyRole}]` : '';
+  // Формируем роль с эмодзи (если роль передана)
+  const roleEmoji = getRoleEmoji(companyRole);
+
+  // Используем область работ вместо категории
+  const displayWorkArea = order.work_area || order.category || order.request_type;
+
+  // Хук (если есть)
+  const hookLine = order.hook ? `${order.hook}\n\n` : '';
 
   return `📊 <b>ИЩЮТ СОТРУДНИКА</b>
-━━━━━━━━━━━━━━━━━━━━━━━
-${order.category}
+━━━━━━━━━━━
+${hookLine}${order.company_name}${roleEmoji}
+━━━━━━━━━━━
 
-${order.company_name}${roleEmoji}
-━━━━━━━━━━━━━━━━━━━━━━━
-
-🔍 <b><u>Ищут специалиста:</u></b> ${order.category}
+🔍 <b><u>Ищут специалиста:</u></b> ${displayWorkArea}
 🏢 <b><u>Заказчик:</u></b> ${order.company_name}
 📍 <b><u>Город / объект:</u></b> ${order.city_location}
 
 📝 <b><u>Задача:</u></b> ${order.work_type}
-${requirements ? `✅ <b><u>Требования:</u></b> ${requirements}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━
+${requirements ? `✅ <b><u>Требования:</u></b> ${requirements}\n` : ''}━━━━━━━━━━━
 📞 ${order.contact} | ${telegramTag}`;
 }
 
@@ -3051,21 +3076,22 @@ function formatChannelContractorPost(contractor) {
   const tripsText = contractor.ready_for_trips ? ' — готов к командировкам' : '';
   const advantages = contractor.professional_advantages || '';
 
-  // Используем хук вместо specialization, если он есть
-  const displayHook = contractor.hook || contractor.specialization;
+  // Роль с эмодзи (если есть)
+  const roleEmoji = getRoleEmoji(contractor.role);
 
-  // Роль (если есть)
-  const roleEmoji = contractor.role ? `\n🧠 [${contractor.role}]` : '';
+  // Используем область работ вместо категории
+  const displayWorkArea = contractor.work_area || contractor.category || contractor.specialization;
+
+  // Хук (если есть)
+  const hookLine = contractor.hook ? `${contractor.hook}\n\n` : '';
 
   // Формируем ссылку на бота
   const botLink = `<a href="https://t.me/${BOT_USERNAME}">Базе сообщества</a>`;
 
   return `📊 <b>ИЩЕТ РАБОТУ</b>
-━━━━━━━━━━━━━━━━━━━━━━━
-${displayHook}
-
-${contractor.name} | ${contractor.category}${roleEmoji}
-━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━
+${hookLine}${contractor.name} | ${displayWorkArea}${roleEmoji}
+━━━━━━━━━━━
 
 🔧 <b><u>Специализация:</u></b> ${contractor.specialization}
 💼 <b><u>Формат работы:</u></b> ${contractor.work_format}
@@ -3074,7 +3100,7 @@ ${contractor.name} | ${contractor.category}${roleEmoji}
 🏗 <b><u>Задачи / объекты:</u></b> ${contractor.objects_worked}
 ${advantages ? `⭐️ <b><u>Преимущества:</u></b> ${advantages}\n` : ''}📋 <b><u>Оформление:</u></b> ${contractor.cooperation_format}
 
-━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━
 ☎️ Контакты этого специалиста и другие предложения —
 доступны в ${botLink}`;
 }
@@ -3083,28 +3109,29 @@ ${advantages ? `⭐️ <b><u>Преимущества:</u></b> ${advantages}\n` 
 function formatChannelOrderPost(order) {
   const requirements = order.executor_requirements || '';
 
-  // Используем хук или category
-  const displayHook = order.hook || order.category;
+  // Используем область работ вместо категории
+  const displayWorkArea = order.work_area || order.category || order.request_type;
 
-  // Роль (если есть)
-  const roleEmoji = order.role ? `\n🏗️ [${order.role}]` : '';
+  // Роль с эмодзи (если есть)
+  const roleEmoji = getRoleEmoji(order.role);
+
+  // Хук (если есть)
+  const hookLine = order.hook ? `${order.hook}\n\n` : '';
 
   // Формируем ссылку на бота
   const botLink = `<a href="https://t.me/${BOT_USERNAME}">Базе сообщества</a>`;
 
   return `📊 <b>ИЩЮТ СОТРУДНИКА</b>
-━━━━━━━━━━━━━━━━━━━━━━━
-${displayHook}
+━━━━━━━━━━━
+${hookLine}${order.company_name}${roleEmoji}
+━━━━━━━━━━━
 
-${order.company_name}${roleEmoji}
-━━━━━━━━━━━━━━━━━━━━━━━
-
-🔍 <b><u>Ищут специалиста:</u></b> ${order.category}
+🔍 <b><u>Ищут специалиста:</u></b> ${displayWorkArea}
 🏢 <b><u>Заказчик:</u></b> ${order.company_name}
 📍 <b><u>Город / объект:</u></b> ${order.city_location}
 
 📝 <b><u>Задача:</u></b> ${order.work_type}
-${requirements ? `✅ <b><u>Требования:</u></b> ${requirements}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━
+${requirements ? `✅ <b><u>Требования:</u></b> ${requirements}\n` : ''}━━━━━━━━━━━
 ☎️ Контакты этого заказчика и другие предложения —
 доступны в ${botLink}`;
 }
@@ -3299,12 +3326,6 @@ async function showContractorCards(chatId, userId, currentIndex) {
   }
   if (navButtons.length > 0) {
     buttons.push(navButtons);
-  }
-
-  // Кнопка портфолио (если есть)
-  if (currentContractor.channel_post_id) {
-    const portfolioUrl = `https://t.me/${COMMUNITY_CHANNEL_NAME}/${currentContractor.channel_post_id}`;
-    buttons.push([{ text: '🖼 Портфолио специалиста', url: portfolioUrl }]);
   }
 
   // Кнопка создать заявку
@@ -3827,6 +3848,7 @@ async function finishForm(chatId, userId, telegramUsername) {
     portfolio: userData.data.portfolio || [], // Весь массив фотографий портфолио
     telegramTag: telegramUsername ? `@${telegramUsername}` : null,
     category: userData.data.category || null, // этап 5: AI-определенная категория
+    workArea: userData.data.workArea || null, // Область работ на основе категории
     role: userRole || null, // этап 2: получаем роль из таблицы user_roles
     hook: hook || null // Добавляем сгенерированный хук
   });
@@ -3899,6 +3921,7 @@ async function finishOrderForm(chatId, userId) {
     contact: userData.data.contact,
     telegramTag: userData.data.telegramTag,
     category: userData.data.category || null, // этап 5: AI-определенная категория
+    workArea: userData.data.workArea || null, // Область работ на основе категории
     role: userRole || null, // этап 2: получаем роль из таблицы user_roles
     hook: hook || null // Добавляем сгенерированный хук
   });
@@ -5004,6 +5027,7 @@ bot.on('message', async (msg) => {
 
           state.data.requestType = responseText.trim();
           state.data.category = orderCategory; // Сохраняем категорию
+          state.data.workArea = getWorkAreaByCategory(orderCategory); // Сохраняем область работ
           state.step = 2;
           await askOrderStep2(chatId, userId);
           break;
@@ -5219,6 +5243,7 @@ bot.on('message', async (msg) => {
         try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
         state.data.specialization = processedSpecialization;
         state.data.category = category; // Сохраняем категорию
+        state.data.workArea = getWorkAreaByCategory(category); // Сохраняем область работ
         state.step = 3;
         await askStep3(chatId, userId);
         break;
@@ -5399,28 +5424,6 @@ bot.on('message', async (msg) => {
         break;
     }
 
-    return;
-  }
-  
-  // Обработка кнопки "Сообщество Голос Стройки"
-  if (text === '💬 Сообщество Голос Стройки') {
-    // Удаляем сообщение пользователя с кнопкой
-    try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
-
-    const communityMsg = await bot.sendMessage(
-      chatId,
-      `📢 Присоединяйся к нашему сообществу: ${CHANNEL_ID}`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📢 Перейти в канал', url: `https://t.me/${CHANNEL_ID.replace('@', '')}` }]
-          ]
-        }
-      }
-    );
-
-    // Удаляем сообщение через 10 секунд
-    deleteMessageAfterDelay(chatId, communityMsg.message_id, 10000);
     return;
   }
 });
