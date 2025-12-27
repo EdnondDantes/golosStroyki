@@ -3022,6 +3022,12 @@ function formatContractorCard(contractor, userRole = null) {
   // Хук (если есть)
   const hookLine = contractor.hook ? `${contractor.hook}\n\n` : '';
 
+  // Формируем ссылку на портфолио, если есть фото и channel_post_id
+  const hasPortfolio = contractor.portfolio_photos && contractor.portfolio_photos.length > 0 && contractor.channel_post_id;
+  const portfolioLine = hasPortfolio
+    ? `📸 <b><u>Портфолио:</u></b> <a href="https://t.me/${COMMUNITY_CHANNEL_NAME}/${contractor.channel_post_id}">Посмотреть портфолио</a>\n`
+    : '';
+
   return `📊 <b>ИЩЕТ РАБОТУ</b>
 ━━━━━━━━━━━
 ${hookLine}${contractor.name} | ${displayWorkArea}${roleEmoji}
@@ -3033,7 +3039,7 @@ ${hookLine}${contractor.name} | ${displayWorkArea}${roleEmoji}
 ⏱ <b><u>Опыт:</u></b> ${contractor.experience}
 🏗 <b><u>Задачи / объекты:</u></b> ${contractor.objects_worked}
 ${advantages ? `⭐️ <b><u>Преимущества:</u></b> ${advantages}\n` : ''}📋 <b><u>Оформление:</u></b> ${contractor.cooperation_format}
-
+${portfolioLine}
 ━━━━━━━━━━━
 📞 ${contractor.contact} | ${telegramTag}`;
 }
