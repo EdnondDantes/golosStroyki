@@ -1486,11 +1486,9 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
   // Сохраняем источник трафика при первом запуске (этап 1)
   await saveUserSource(userId, param ? 'deep_link' : 'другое');
 
-  // Проверяем, есть ли уже роль у пользователя (возвращающийся пользователь)
-  const userRole = await checkUserRole(userId);
-
-  if (userRole && pendingDeepLinks[userId]) {
-    // Возвращающийся пользователь с deep link - сразу проверяем подписку и показываем анкету
+  // Если есть deep link параметр - пропускаем приветственный экран
+  if (pendingDeepLinks[userId]) {
+    // Проверяем подписку на канал
     const isSubscribed = await checkSubscription(userId);
 
     if (!isSubscribed) {
@@ -1510,12 +1508,21 @@ bot.onText(/\/start(.*)/, async (msg, match) => {
       return;
     }
 
-    // Подписан - показываем анкету сразу
+    // Проверяем, есть ли уже роль у пользователя
+    const userRole = await checkUserRole(userId);
+
+    if (!userRole) {
+      // Роль не найдена - показываем экран выбора роли (без приветственного экрана)
+      await showRoleSelection(chatId);
+      return;
+    }
+
+    // Роль есть и подписан - сразу показываем анкету
     await showDeepLinkedProfile(chatId, userId);
     return;
   }
 
-  // Новый пользователь или пользователь без deep link - показываем стартовый экран
+  // Новый пользователь без deep link - показываем стартовый экран
   await showWelcomeScreen(chatId);
 });
 
@@ -2457,7 +2464,7 @@ bot.on('callback_query', async (query) => {
 
 Можно:
 — написать текстом
-— или отправить голосовое сообщение
+// — или отправить голосовое сообщение
 
 Я подберу специалистов из Базы по твоему запросу.
 
@@ -3731,7 +3738,7 @@ async function askStep6(chatId, userId) {
 
 <i>Можно:</i>
 — написать текстом
-— или отправить голосовое сообщение
+// — или отправить голосовое сообщение
 
 Я приведу информацию в аккуратный и понятный вид.
 
@@ -3779,7 +3786,7 @@ async function askStep7(chatId, userId) {
 — собственная команда или оборудование
 
 <i>Можно написать текстом
-или отправить голосовое сообщение —
+// или отправить голосовое сообщение —
 я приведу его в аккуратный и понятный вид.</i>
 
 <i>Пример:</i>
@@ -4273,7 +4280,8 @@ async function askOrderStep4(chatId, userId) {
 С чего начинается работа?
 Сколько специалистов требуется?
 
-Можно написать или записать голосовое.
+Можно написать текстом.
+// или записать голосовое.
 
 <i>Пример:</i>
 <i>«Нужно уложить плитку в санузле, стены и пол.
@@ -4682,7 +4690,7 @@ bot.on('message', async (msg) => {
 
 Можно:
 — написать текстом
-— или отправить голосовое сообщение
+// — или отправить голосовое сообщение
 
 Я подберу специалистов из Базы по твоему запросу.
 
@@ -4716,7 +4724,7 @@ bot.on('message', async (msg) => {
         await safeDeleteMessage(chatId, processingMsg.message_id);
 
         if (!userQuery) {
-          await bot.sendMessage(chatId, '❌ Не удалось распознать голос. Попробуй еще раз или напиши текстом.');
+          await bot.sendMessage(chatId, '❌ Не удалось распознать голос. Попробуй еще раз.' /* или напиши текстом. */);
           return;
         }
 
@@ -4906,7 +4914,7 @@ bot.on('message', async (msg) => {
 
 Можно:
 — написать текстом
-— или отправить голосовое сообщение
+// — или отправить голосовое сообщение
 
 Я подберу подходящие заявки из Базы по твоему запросу.
 
@@ -4940,7 +4948,7 @@ bot.on('message', async (msg) => {
         await safeDeleteMessage(chatId, processingMsg.message_id);
 
         if (!userQuery) {
-          await bot.sendMessage(chatId, '❌ Не удалось распознать голос. Попробуй еще раз или напиши текстом.');
+          await bot.sendMessage(chatId, '❌ Не удалось распознать голос. Попробуй еще раз.' /* или напиши текстом. */);
           return;
         }
 
@@ -5119,7 +5127,7 @@ bot.on('message', async (msg) => {
       responseText = await recognizeVoice(msg.voice.file_id);
 
       if (!responseText) {
-        await bot.sendMessage(chatId, '❌ Не удалось распознать голос. Попробуй еще раз или напиши текстом.');
+        await bot.sendMessage(chatId, '❌ Не удалось распознать голос. Попробуй еще раз.' /* или напиши текстом. */);
         return;
       }
 
@@ -5150,7 +5158,7 @@ bot.on('message', async (msg) => {
 
     // Проверка на пустой ответ (не применяется к шагу 11 - фото)
     if ((!responseText || responseText.trim() === '') && state.step !== 11) {
-      await bot.sendMessage(chatId, '❌ Пожалуйста, введи текст или отправь голосовое сообщение.');
+      await bot.sendMessage(chatId, '❌ Пожалуйста, введи текст');
       return;
     }
 
