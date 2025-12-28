@@ -85,6 +85,9 @@ const complaintStates = {};
 // Хранилище ID сообщений для редактирования (живые сообщения)
 const liveMessages = {};
 
+// Хранилище deep link параметров для новых пользователей
+const pendingDeepLinks = {};
+
 // ==================== УТИЛИТЫ ====================
 
 // Проверка, можно ли удалять сообщения в этом чате
@@ -1453,7 +1456,7 @@ async function showRoleSelection(chatId) {
 }
 
 // Команда /start
-bot.onText(/\/start/, async (msg) => {
+bot.onText(/\/start(.*)/, async (msg, match) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
   const username = msg.from.username || 'без username';
@@ -1465,14 +1468,157 @@ bot.onText(/\/start/, async (msg) => {
 
   console.log(`Пользователь ${username} (${userId}) запустил бота`);
 
-  // Сохраняем источник трафика при первом запуске (этап 1)
-  // В будущем можно добавить параметры к /start для отслеживания источника
-  // Например: /start?source=instagram
-  await saveUserSource(userId, 'другое');
+  // Парсим deep link параметр
+  const param = match[1].trim(); // " contractor_123" или " order_456" или ""
 
-  // Показываем стартовый экран с выбором действия (этап 1)
+  if (param.startsWith('contractor_')) {
+    // Сохраняем ID анкеты для показа после онбординга
+    const contractorId = param.replace('contractor_', '');
+    pendingDeepLinks[userId] = { type: 'contractor', id: contractorId };
+    console.log(`🔗 Deep link: сохранён ID анкеты ${contractorId} для пользователя ${userId}`);
+  } else if (param.startsWith('order_')) {
+    // Сохраняем ID заявки для показа после онбординга
+    const orderId = param.replace('order_', '');
+    pendingDeepLinks[userId] = { type: 'order', id: orderId };
+    console.log(`🔗 Deep link: сохранён ID заявки ${orderId} для пользователя ${userId}`);
+  }
+
+  // Сохраняем источник трафика при первом запуске (этап 1)
+  await saveUserSource(userId, param ? 'deep_link' : 'другое');
+
+  // Проверяем, есть ли уже роль у пользователя (возвращающийся пользователь)
+  const userRole = await checkUserRole(userId);
+
+  if (userRole && pendingDeepLinks[userId]) {
+    // Возвращающийся пользователь с deep link - сразу проверяем подписку и показываем анкету
+    const isSubscribed = await checkSubscription(userId);
+
+    if (!isSubscribed) {
+      // Если не подписан - показываем сообщение с просьбой подписаться
+      const subscriptionText = `Чтобы пользоваться <b>Базой сообщества</b>,
+нужно быть подписанным на сообщество «Голос Стройки».
+
+<i>Все анкеты и заявки публикуются именно там.</i>
+
+Подпишись на сообщество и возвращайся в бот 👇`;
+
+      await bot.sendMessage(chatId, subscriptionText, {
+        parse_mode: 'HTML',
+        ...checkSubscriptionKeyboard,
+        disable_web_page_preview: true
+      });
+      return;
+    }
+
+    // Подписан - показываем анкету сразу
+    await showDeepLinkedProfile(chatId, userId);
+    return;
+  }
+
+  // Новый пользователь или пользователь без deep link - показываем стартовый экран
   await showWelcomeScreen(chatId);
 });
+
+// Показать анкету/заявку по deep link
+async function showDeepLinkedProfile(chatId, userId) {
+  const deepLinkData = pendingDeepLinks[userId];
+
+  if (!deepLinkData) {
+    // Если данных нет - показываем главное меню
+    await showMainMenu(chatId);
+    return;
+  }
+
+  try {
+    if (deepLinkData.type === 'contractor') {
+      // Получаем анкету специалиста из БД
+      const { data: contractor, error } = await supabase
+        .from('contractors')
+        .select('*')
+        .eq('id', deepLinkData.id)
+        .single();
+
+      if (error || !contractor) {
+        console.error('❌ Ошибка получения анкеты:', error?.message);
+        await bot.sendMessage(chatId, '❌ Анкета не найдена или была удалена.');
+        delete pendingDeepLinks[userId];
+        await showMainMenu(chatId);
+        return;
+      }
+
+      // Получаем роль специалиста
+      const userRole = contractor.telegram_id ? await checkUserRole(contractor.telegram_id) : null;
+
+      // Форматируем карточку
+      const cardText = formatContractorCard(contractor, userRole);
+
+      // Кнопки навигации
+      const buttons = [
+        [{ text: '🔎 Найти еще специалистов', callback_data: 'search_people' }],
+        [{ text: '💼 Найти работу', callback_data: 'search_work' }],
+        [{ text: '🏠 В меню', callback_data: 'main_menu' }]
+      ];
+
+      // Отправляем анкету
+      await bot.sendMessage(chatId, cardText, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        reply_markup: {
+          inline_keyboard: buttons
+        }
+      });
+
+      // Очищаем сохранённый deep link
+      delete pendingDeepLinks[userId];
+
+    } else if (deepLinkData.type === 'order') {
+      // Получаем заявку из БД
+      const { data: order, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('id', deepLinkData.id)
+        .single();
+
+      if (error || !order) {
+        console.error('❌ Ошибка получения заявки:', error?.message);
+        await bot.sendMessage(chatId, '❌ Заявка не найдена или была удалена.');
+        delete pendingDeepLinks[userId];
+        await showMainMenu(chatId);
+        return;
+      }
+
+      // Получаем роль компании
+      const companyRole = order.telegram_id ? await checkUserRole(order.telegram_id) : null;
+
+      // Форматируем карточку
+      const cardText = formatOrderCard(order, companyRole);
+
+      // Кнопки навигации
+      const buttons = [
+        [{ text: '🔎 Найти еще специалистов', callback_data: 'search_people' }],
+        [{ text: '💼 Найти работу', callback_data: 'search_work' }],
+        [{ text: '🏠 В меню', callback_data: 'main_menu' }]
+      ];
+
+      // Отправляем заявку
+      await bot.sendMessage(chatId, cardText, {
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+        reply_markup: {
+          inline_keyboard: buttons
+        }
+      });
+
+      // Очищаем сохранённый deep link
+      delete pendingDeepLinks[userId];
+    }
+  } catch (error) {
+    console.error('❌ Ошибка при показе deep link профиля:', error.message);
+    await bot.sendMessage(chatId, '❌ Произошла ошибка при загрузке данных.');
+    delete pendingDeepLinks[userId];
+    await showMainMenu(chatId);
+  }
+}
 
 // Показать главное меню
 async function showMainMenu(chatId) {
@@ -1548,6 +1694,12 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
+    // Проверяем, есть ли сохранённый deep link
+    if (pendingDeepLinks[userId]) {
+      await showDeepLinkedProfile(chatId, userId);
+      return;
+    }
+
     // Роль найдена - переходим к главному меню
     await showMainMenu(chatId);
     return;
@@ -1567,6 +1719,12 @@ bot.on('callback_query', async (query) => {
       if (!userRole) {
         // Роль не найдена - показываем экран выбора роли
         await showRoleSelection(chatId);
+        return;
+      }
+
+      // Проверяем, есть ли сохранённый deep link
+      if (pendingDeepLinks[userId]) {
+        await showDeepLinkedProfile(chatId, userId);
         return;
       }
 
@@ -1616,6 +1774,12 @@ bot.on('callback_query', async (query) => {
         parse_mode: 'HTML'
       });
       deleteMessageAfterDelay(chatId, errorMsg.message_id, 5000);
+    }
+
+    // Проверяем, есть ли сохранённый deep link
+    if (pendingDeepLinks[userId]) {
+      await showDeepLinkedProfile(chatId, userId);
+      return;
     }
 
     // Переходим к главному меню
@@ -3058,7 +3222,7 @@ function formatOrderCard(order, companyRole = null) {
   // Хук (если есть)
   const hookLine = order.hook ? `${order.hook}\n\n` : '';
 
-  return `📊 <b>ИЩЮТ СОТРУДНИКА</b>
+  return `📊 <b>ИЩУТ СОТРУДНИКА</b>
 ━━━━━━━━━━━
 ${hookLine}${order.company_name}${roleEmoji}
 ━━━━━━━━━━━
@@ -3075,7 +3239,7 @@ ${requirements ? `✅ <b><u>Требования:</u></b> ${requirements}\n` : '
 // ==================== ФУНКЦИИ ФОРМАТИРОВАНИЯ ДЛЯ КАНАЛА ====================
 
 // Форматирование поста специалиста для канала (БЕЗ контактов)
-function formatChannelContractorPost(contractor) {
+function formatChannelContractorPost(contractor, contractorId) {
   const tripsText = contractor.ready_for_trips ? ' — готов к командировкам' : '';
   const advantages = contractor.professional_advantages || '';
 
@@ -3088,8 +3252,8 @@ function formatChannelContractorPost(contractor) {
   // Хук (если есть)
   const hookLine = contractor.hook ? `${contractor.hook}\n\n` : '';
 
-  // Формируем ссылку на бота
-  const botLink = `<a href="https://t.me/${BOT_USERNAME}">Базе сообщества</a>`;
+  // Формируем deep link ссылку на бота с ID анкеты
+  const botLink = `<a href="https://t.me/${BOT_USERNAME}?start=contractor_${contractorId}">Базе сообщества</a>`;
 
   return `📊 <b>ИЩЕТ РАБОТУ</b>
 ━━━━━━━━━━━
@@ -3109,7 +3273,7 @@ ${advantages ? `⭐️ <b><u>Преимущества:</u></b> ${advantages}\n` 
 }
 
 // Форматирование поста заявки для канала (БЕЗ контактов)
-function formatChannelOrderPost(order) {
+function formatChannelOrderPost(order, orderId) {
   const requirements = order.executor_requirements || '';
 
   // Используем область работ вместо категории
@@ -3121,10 +3285,10 @@ function formatChannelOrderPost(order) {
   // Хук (если есть)
   const hookLine = order.hook ? `${order.hook}\n\n` : '';
 
-  // Формируем ссылку на бота
-  const botLink = `<a href="https://t.me/${BOT_USERNAME}">Базе сообщества</a>`;
+  // Формируем deep link ссылку на бота с ID заявки
+  const botLink = `<a href="https://t.me/${BOT_USERNAME}?start=order_${orderId}">Базе сообщества</a>`;
 
-  return `📊 <b>ИЩЮТ СОТРУДНИКА</b>
+  return `📊 <b>ИЩУТ СОТРУДНИКА</b>
 ━━━━━━━━━━━
 ${hookLine}${order.company_name}${roleEmoji}
 ━━━━━━━━━━━
@@ -3146,8 +3310,8 @@ async function publishContractorToChannel(contractor, contractorId) {
   try {
     console.log(`📤 Публикация анкеты специалиста ${contractorId} в канал...`);
 
-    // Форматируем текст для канала
-    const postText = formatChannelContractorPost(contractor);
+    // Форматируем текст для канала с deep link
+    const postText = formatChannelContractorPost(contractor, contractorId);
 
     let sentMessage;
     const photos = contractor.portfolio_photos || [];
@@ -3210,8 +3374,8 @@ async function publishOrderToChannel(order, orderId) {
   try {
     console.log(`📤 Публикация заявки ${orderId} в канал...`);
 
-    // Форматируем текст для канала
-    const postText = formatChannelOrderPost(order);
+    // Форматируем текст для канала с deep link
+    const postText = formatChannelOrderPost(order, orderId);
 
     // У заявок нет фото - только текст
     const sentMessage = await bot.sendMessage(CHANNEL_ID, postText, {
