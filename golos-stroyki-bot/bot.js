@@ -658,6 +658,21 @@ function getRoleEmoji(role) {
   return `\n${emoji} [${role}]`;
 }
 
+// Функция преобразования формата работы из родительного падежа в именительный
+function normalizeWorkFormat(workFormat) {
+  const formatMap = {
+    'Специалиста': 'Специалист',
+    'Бригаду': 'Бригада',
+    'Компанию/подрядчика': 'Компания',
+    'Компания/подрядчик': 'Компания',
+    // Также поддерживаем именительный падеж (если уже передан)
+    'Специалист': 'Специалист',
+    'Бригада': 'Бригада',
+    'Компания': 'Компания'
+  };
+  return formatMap[workFormat] || workFormat;
+}
+
 // Этап 5: AI-определение категории из списка 275 позиций
 async function determineCategoryWithAI(text, workFormat) {
   try {
@@ -667,19 +682,22 @@ async function determineCategoryWithAI(text, workFormat) {
       return null;
     }
 
+    // Нормализуем формат работы (из родительного падежа в именительный)
+    const normalizedFormat = normalizeWorkFormat(workFormat);
+
     // Определяем список категорий в зависимости от формата работы
     let categoryList = [];
-    if (workFormat === 'Специалист') {
+    if (normalizedFormat === 'Специалист') {
       categoryList = CATEGORIES.specialists;
-    } else if (workFormat === 'Бригада') {
+    } else if (normalizedFormat === 'Бригада') {
       categoryList = CATEGORIES.brigades;
-    } else if (workFormat === 'Компания') {
+    } else if (normalizedFormat === 'Компания') {
       categoryList = CATEGORIES.companies;
     } else if (workFormat === 'any') {
       // Для заявок используем все категории
       categoryList = [...CATEGORIES.specialists, ...CATEGORIES.brigades, ...CATEGORIES.companies];
     } else {
-      console.log(`⚠️ Неизвестный формат работы: ${workFormat}`);
+      console.log(`⚠️ Неизвестный формат работы: ${workFormat} (normalized: ${normalizedFormat})`);
       return null;
     }
 
@@ -744,7 +762,8 @@ ${categoryList.join('\n')}
     // Логирование для отладки
     console.log(`🔍 Определение категории:`);
     console.log(`   Текст: "${text}"`);
-    console.log(`   Формат: ${workFormat}`);
+    console.log(`   Формат (оригинал): ${workFormat}`);
+    console.log(`   Формат (нормализован): ${normalizedFormat}`);
     console.log(`   AI ответ: "${aiResponse}"`);
     console.log(`   Результат: ${category || 'НЕ ОПРЕДЕЛЕНО'}`);
 
@@ -1638,7 +1657,7 @@ async function showMainMenu(chatId) {
 Найди специалистов через быстрый поиск
 или создай заявку — исполнители сами свяжутся с тобой.
 
-❓По вопросам и предложениям: @arrtproduction`;
+❓Если у вас возникли вопросы или предложения по работе «Базы» обращайтесь сюда @arrtproduction`;
 
   // Отправляем сообщение с инлайн-кнопками и сохраняем ID
   const menuMessage = await bot.sendMessage(chatId, menuText, {
@@ -1871,7 +1890,7 @@ bot.on('callback_query', async (query) => {
   if (data === 'confirm_order_form') {
     await bot.answerCallbackQuery(query.id);
 
-    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 9) {
+    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 10) {
       // Редактируем сообщение: убираем кнопки и служебную часть, оставляя только данные заявки
       try {
         const userData = userStates[userId].data;
@@ -2074,26 +2093,43 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // Обработка кнопок города (Order Step 2)
+  // Обработка кнопок формата работы (Order Step 1)
+  if (data.startsWith('ord_format_')) {
+    await bot.answerCallbackQuery(query.id);
+    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 1) {
+      let workFormat = '';
+      if (data === 'ord_format_specialist') workFormat = 'Специалиста';
+      else if (data === 'ord_format_team') workFormat = 'Бригаду';
+      else if (data === 'ord_format_company') workFormat = 'Компанию/подрядчика';
+
+      userStates[userId].data.workFormat = workFormat;
+      userStates[userId].step = 2;
+
+      await askOrderStep2(chatId, userId);
+    }
+    return;
+  }
+
+  // Обработка кнопок города (Order Step 3)
   if (data.startsWith('ord_city_')) {
     await bot.answerCallbackQuery(query.id);
-    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 2) {
+    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 3) {
       let city = '';
       if (data === 'ord_city_moscow') city = 'Москва';
       else if (data === 'ord_city_spb') city = 'Санкт-Петербург';
 
       userStates[userId].data.cityLocation = city;
-      userStates[userId].step = 3;
+      userStates[userId].step = 4;
 
-      await askOrderStep3(chatId, userId);
+      await askOrderStep4(chatId, userId);
     }
     return;
   }
 
-  // Обработка кнопок типа объекта (Order Step 3)
+  // Обработка кнопок типа объекта (Order Step 4)
   if (data.startsWith('ord_obj_')) {
     await bot.answerCallbackQuery(query.id);
-    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 3) {
+    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 4) {
       let objectType = '';
       if (data === 'ord_obj_apartment') objectType = 'Квартира';
       else if (data === 'ord_obj_house') objectType = 'Дом';
@@ -2103,17 +2139,17 @@ bot.on('callback_query', async (query) => {
       else if (data === 'ord_obj_roads') objectType = 'Дороги';
 
       userStates[userId].data.objectType = objectType;
-      userStates[userId].step = 4;
+      userStates[userId].step = 5;
 
-      await askOrderStep4(chatId, userId);
+      await askOrderStep5(chatId, userId);
     }
     return;
   }
 
-  // Обработка кнопок требований к исполнителю (Order шаг 6 - опыт)
+  // Обработка кнопок требований к исполнителю (Order шаг 7 - опыт)
   if (data.startsWith('ord_exp_')) {
     await bot.answerCallbackQuery(query.id);
-    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 6) {
+    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 7) {
       let experience = '';
       if (data === 'ord_exp_less1') experience = 'Опыт: менее 1 года';
       else if (data === 'ord_exp_1_3') experience = 'Опыт: 1-3 года';
@@ -2122,35 +2158,35 @@ bot.on('callback_query', async (query) => {
       else if (data === 'ord_exp_more10') experience = 'Опыт: более 10 лет';
 
       userStates[userId].data.executorRequirements = experience;
+      userStates[userId].step = 8;
+      await askOrderStep8(chatId, userId);
+    }
+    return;
+  }
+
+  // Обработка кнопки "Пропустить требования" (Order Step 6)
+  if (data === 'skip_order_requirements') {
+    await bot.answerCallbackQuery(query.id);
+    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 6) {
+      userStates[userId].data.executorRequirements = null;
       userStates[userId].step = 7;
       await askOrderStep7(chatId, userId);
     }
     return;
   }
 
-  // Обработка кнопки "Пропустить требования" (Order Step 5)
-  if (data === 'skip_order_requirements') {
-    await bot.answerCallbackQuery(query.id);
-    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 5) {
-      userStates[userId].data.executorRequirements = null;
-      userStates[userId].step = 6;
-      await askOrderStep6(chatId, userId);
-    }
-    return;
-  }
-
-  // Обработка кнопок срока актуальности (Order Step 6)
+  // Обработка кнопок срока актуальности (Order Step 7)
   if (data.startsWith('ord_validity_')) {
     await bot.answerCallbackQuery(query.id);
-    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 6) {
+    if (userStates[userId] && userStates[userId].formType === 'order' && userStates[userId].step === 7) {
       let validityPeriod = '';
       if (data === 'ord_validity_7') validityPeriod = '7 дней';
       else if (data === 'ord_validity_14') validityPeriod = '14 дней';
       else if (data === 'ord_validity_30') validityPeriod = '30 дней';
 
       userStates[userId].data.validityPeriod = validityPeriod;
-      userStates[userId].step = 7;
-      await askOrderStep7(chatId, userId);
+      userStates[userId].step = 8;
+      await askOrderStep8(chatId, userId);
     }
     return;
   }
@@ -2173,6 +2209,7 @@ bot.on('callback_query', async (query) => {
         else if (step === 7) await askOrderStep7(chatId, userId);
         else if (step === 8) await askOrderStep8(chatId, userId);
         else if (step === 9) await askOrderStep9(chatId, userId);
+        else if (step === 10) await askOrderStep10(chatId, userId);
       }
     }
     return;
@@ -2344,7 +2381,7 @@ bot.on('callback_query', async (query) => {
     }
 
     // Анкета есть - показываем выбор города (Шаг 1)
-    const cityText = `📍 Шаг 1 из 2 — Город
+    const cityText = `📍 Шаг 1 из 3 — Город
 
 В каком городе ищешь работу?
 
@@ -2422,10 +2459,49 @@ bot.on('callback_query', async (query) => {
 
     searchStates[userId].city = selectedCity;
     searchStates[userId].type = 'search_orders';
+    searchStates[userId].step = 'waiting_work_format';
+
+    // Показываем форму выбора формата работы (Шаг 2)
+    const formatText = `Шаг 2 из 3 — Формат работы
+
+Вы работаете как:`;
+
+    const formatPromptMsg = await bot.sendMessage(chatId, formatText, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: 'Специалист', callback_data: 'quick_work_format_specialist' }],
+          [{ text: 'Бригада', callback_data: 'quick_work_format_team' }],
+          [{ text: 'Компания/подрядчик', callback_data: 'quick_work_format_company' }],
+          [{ text: '◀️ Назад', callback_data: 'quick_search_work' }],
+          [{ text: '🏠 В меню', callback_data: 'main_menu' }]
+        ]
+      }
+    });
+
+    searchStates[userId].promptMessageId = formatPromptMsg.message_id;
+    return;
+  }
+
+  // Обработка выбора формата работы в быстром поиске работы
+  if (data.startsWith('quick_work_format_')) {
+    const formatType = data.replace('quick_work_format_', '');
+    await bot.answerCallbackQuery(query.id);
+    await safeDeleteMessage(chatId, query.message.message_id);
+
+    if (!searchStates[userId]) {
+      searchStates[userId] = {};
+    }
+
+    let workFormat = '';
+    if (formatType === 'specialist') workFormat = 'Специалист';
+    else if (formatType === 'team') workFormat = 'Бригада';
+    else if (formatType === 'company') workFormat = 'Компания/подрядчик';
+
+    searchStates[userId].workFormat = workFormat;
     searchStates[userId].step = 'waiting_query';
 
-    // Показываем форму описания работы (Шаг 2)
-    const searchText = `Шаг 2 из 2 — Описание работы
+    // Показываем форму описания работы (Шаг 3)
+    const searchText = `Шаг 3 из 3 — Описание работы
 
 Напишите вашу специальность, профессию или опишите род деятельности.`;
 
@@ -2455,10 +2531,49 @@ bot.on('callback_query', async (query) => {
 
     searchStates[userId].city = selectedCity;
     searchStates[userId].type = 'search_contractors';
+    searchStates[userId].step = 'waiting_format';
+
+    // Показываем форму выбора формата (Шаг 2)
+    const formatText = `Шаг 2 из 3 — Формат работы
+
+Кого вы ищете?`;
+
+    const formatPromptMsg = await bot.sendMessage(chatId, formatText, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: 'Специалиста', callback_data: 'quick_contractors_format_specialist' }],
+          [{ text: 'Бригаду', callback_data: 'quick_contractors_format_team' }],
+          [{ text: 'Компанию/подрядчика', callback_data: 'quick_contractors_format_company' }],
+          [{ text: '◀️ Назад', callback_data: 'quick_search_contractors' }],
+          [{ text: '🏠 В меню', callback_data: 'main_menu' }]
+        ]
+      }
+    });
+
+    searchStates[userId].promptMessageId = formatPromptMsg.message_id;
+    return;
+  }
+
+  // Обработка выбора формата работы в быстром поиске специалистов
+  if (data.startsWith('quick_contractors_format_')) {
+    const formatType = data.replace('quick_contractors_format_', '');
+    await bot.answerCallbackQuery(query.id);
+    await safeDeleteMessage(chatId, query.message.message_id);
+
+    if (!searchStates[userId]) {
+      searchStates[userId] = {};
+    }
+
+    let workFormat = '';
+    if (formatType === 'specialist') workFormat = 'Специалиста';
+    else if (formatType === 'team') workFormat = 'Бригаду';
+    else if (formatType === 'company') workFormat = 'Компанию/подрядчика';
+
+    searchStates[userId].workFormat = workFormat;
     searchStates[userId].step = 'waiting_query';
 
-    // Показываем форму описания специалистов (Шаг 2)
-    const searchText = `🔍 Шаг 2 из 2 — Описание специалистов
+    // Показываем форму описания специалистов (Шаг 3)
+    const searchText = `🔍 Шаг 3 из 3 — Описание специалистов
 
 Опиши, каких специалистов ты ищешь.
 
@@ -2468,7 +2583,7 @@ bot.on('callback_query', async (query) => {
 Я подберу специалистов из Базы по твоему запросу.
 
 Пример:
-«Нужен плиточник в Москве для квартиры»`;
+«Нужен плиточник для квартиры»`;
 
     const searchPromptMsg = await bot.sendMessage(chatId, searchText, {
       reply_markup: {
@@ -2581,7 +2696,7 @@ bot.on('callback_query', async (query) => {
     }
 
     // Показываем выбор города (Шаг 1)
-    const cityText = `📍 Шаг 1 из 2 — Город
+    const cityText = `📍 Шаг 1 из 3 — Город
 
 В каком городе ищешь специалистов?
 
@@ -4161,7 +4276,42 @@ async function finishOrderForm(chatId, userId) {
 
 // Шаг 1 Order - Тип запроса
 async function askOrderStep1(chatId, userId) {
-  const text = `👷 Шаг 1 из 9 — Кого ты ищешь?
+  const text = `Шаг 1 из 10 — Формат работы
+
+Кого вы ищете?`;
+
+  if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
+    try {
+      await safeDeleteMessage(chatId, liveMessages[userId].formStepMessageId);
+    } catch (error) {}
+  }
+
+  const msg = await bot.sendMessage(chatId, text, {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: 'Специалиста', callback_data: 'ord_format_specialist' }],
+        [{ text: 'Бригаду', callback_data: 'ord_format_team' }],
+        [{ text: 'Компанию/подрядчика', callback_data: 'ord_format_company' }],
+        [{ text: '❌ Отменить', callback_data: 'cancel_form' }]
+      ]
+    }
+  });
+
+  if (!liveMessages[userId]) liveMessages[userId] = {};
+  liveMessages[userId].formStepMessageId = msg.message_id;
+}
+
+// Шаг 2 Order - Специализация (кого ищешь)
+async function askOrderStep2(chatId, userId) {
+  const userData = userStates[userId].data;
+  let formText = '📋 <b>Твоя заявка:</b>\n\n';
+
+  if (userData.workFormat) formText += `1️⃣ Формат работы: ${userData.workFormat}\n`;
+
+  formText += '\n━━━━━━━━━━━━━━━\n\n';
+
+  const text = `${formText}👷 Шаг 2 из 10 — Кого ты ищешь?
 
 Напиши специализацию своими словами.
 
@@ -4177,7 +4327,7 @@ async function askOrderStep1(chatId, userId) {
     parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
-        [{ text: '❌ Отменить', callback_data: 'cancel_form' }]
+        [{ text: '◀️ Назад', callback_data: 'order_back' }, { text: '❌ Отменить', callback_data: 'cancel_form' }]
       ]
     }
   });
@@ -4186,16 +4336,17 @@ async function askOrderStep1(chatId, userId) {
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 2 Order - Город и локация объекта
-async function askOrderStep2(chatId, userId) {
+// Шаг 3 Order - Город и локация объекта
+async function askOrderStep3(chatId, userId) {
   const userData = userStates[userId].data;
   let formText = '📋 <b>Твоя заявка:</b>\n\n';
 
-  if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
+  if (userData.workFormat) formText += `1️⃣ Формат работы: ${userData.workFormat}\n`;
+  if (userData.requestType) formText += `2️⃣ Кого ищешь: ${userData.requestType}\n`;
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}Шаг 2 из 9 — Город и локация объекта
+  const text = `${formText}Шаг 3 из 10 — Город и локация объекта
 
 Напиши город, в котором нужно выполнить работу,
 или выбери из кнопок ниже.`;
@@ -4221,17 +4372,18 @@ async function askOrderStep2(chatId, userId) {
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 3 Order - Тип объекта
-async function askOrderStep3(chatId, userId) {
+// Шаг 4 Order - Тип объекта
+async function askOrderStep4(chatId, userId) {
   const userData = userStates[userId].data;
   let formText = '📋 <b>Твоя заявка:</b>\n\n';
 
-  if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
-  if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
+  if (userData.workFormat) formText += `1️⃣ Формат работы: ${userData.workFormat}\n`;
+  if (userData.requestType) formText += `2️⃣ Кого ищешь: ${userData.requestType}\n`;
+  if (userData.cityLocation) formText += `3️⃣ Город: ${userData.cityLocation}\n`;
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}Шаг 3 из 9 — Тип объекта
+  const text = `${formText}Шаг 4 из 10 — Тип объекта
 
 На каком объекте нужно выполнить работу?
 Напиши свой вариант или выбери из списка.`;
@@ -4260,18 +4412,19 @@ async function askOrderStep3(chatId, userId) {
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 4 Order - Описание задачи (объединено: работы + объём)
-async function askOrderStep4(chatId, userId) {
+// Шаг 5 Order - Описание задачи (объединено: работы + объём)
+async function askOrderStep5(chatId, userId) {
   const userData = userStates[userId].data;
   let formText = '📋 <b>Твоя заявка:</b>\n\n';
 
-  if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
-  if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
-  if (userData.objectType) formText += `3️⃣ Тип объекта: ${userData.objectType}\n`;
+  if (userData.workFormat) formText += `1️⃣ Формат работы: ${userData.workFormat}\n`;
+  if (userData.requestType) formText += `2️⃣ Кого ищешь: ${userData.requestType}\n`;
+  if (userData.cityLocation) formText += `3️⃣ Город: ${userData.cityLocation}\n`;
+  if (userData.objectType) formText += `4️⃣ Тип объекта: ${userData.objectType}\n`;
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}📝 Шаг 4 из 9 — Описание задачи
+  const text = `${formText}📝 Шаг 5 из 10 — Описание задачи
 
 Опиши задачу.
 Что нужно сделать?
@@ -4303,19 +4456,20 @@ async function askOrderStep4(chatId, userId) {
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 5 Order - Требования к исполнителю (было шаг 6, добавлена кнопка "Пропустить")
-async function askOrderStep5(chatId, userId) {
+// Шаг 6 Order - Требования к исполнителю (было шаг 5, добавлена кнопка "Пропустить")
+async function askOrderStep6(chatId, userId) {
   const userData = userStates[userId].data;
   let formText = '📋 <b>Твоя заявка:</b>\n\n';
 
-  if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
-  if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
-  if (userData.objectType) formText += `3️⃣ Тип объекта: ${userData.objectType}\n`;
-  if (userData.workType) formText += `4️⃣ Описание задачи: ${userData.workType.substring(0, 50)}...\n`;
+  if (userData.workFormat) formText += `1️⃣ Формат работы: ${userData.workFormat}\n`;
+  if (userData.requestType) formText += `2️⃣ Кого ищешь: ${userData.requestType}\n`;
+  if (userData.cityLocation) formText += `3️⃣ Город: ${userData.cityLocation}\n`;
+  if (userData.objectType) formText += `4️⃣ Тип объекта: ${userData.objectType}\n`;
+  if (userData.workType) formText += `5️⃣ Описание задачи: ${userData.workType.substring(0, 50)}...\n`;
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}👤 Шаг 5 из 9 — Требования к исполнителю
+  const text = `${formText}👤 Шаг 6 из 10 — Требования к исполнителю
 
 Если есть особые требования — укажи их здесь.
 Например: опыт, собственное оборудование, допуски, квалификации.
@@ -4342,20 +4496,21 @@ async function askOrderStep5(chatId, userId) {
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 6 Order - Срок актуальности (НОВЫЙ ШАГ)
-async function askOrderStep6(chatId, userId) {
+// Шаг 7 Order - Срок актуальности
+async function askOrderStep7(chatId, userId) {
   const userData = userStates[userId].data;
   let formText = '📋 <b>Твоя заявка:</b>\n\n';
 
-  if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
-  if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
-  if (userData.objectType) formText += `3️⃣ Тип объекта: ${userData.objectType}\n`;
-  if (userData.workType) formText += `4️⃣ Описание задачи: ${userData.workType.substring(0, 50)}...\n`;
-  if (userData.executorRequirements) formText += `5️⃣ Требования: ${userData.executorRequirements}\n`;
+  if (userData.workFormat) formText += `1️⃣ Формат работы: ${userData.workFormat}\n`;
+  if (userData.requestType) formText += `2️⃣ Кого ищешь: ${userData.requestType}\n`;
+  if (userData.cityLocation) formText += `3️⃣ Город: ${userData.cityLocation}\n`;
+  if (userData.objectType) formText += `4️⃣ Тип объекта: ${userData.objectType}\n`;
+  if (userData.workType) formText += `5️⃣ Описание задачи: ${userData.workType.substring(0, 50)}...\n`;
+  if (userData.executorRequirements) formText += `6️⃣ Требования: ${userData.executorRequirements}\n`;
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}⏰ Шаг 6 из 9 — Срок актуальности
+  const text = `${formText}⏰ Шаг 7 из 10 — Срок актуальности
 
 Сколько дней заявка актуальна? По истечению срока заявка скроется и откликов не будет.
 
@@ -4383,21 +4538,22 @@ async function askOrderStep6(chatId, userId) {
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 7 Order - Имя или название компании (НОВЫЙ ШАГ)
-async function askOrderStep7(chatId, userId) {
+// Шаг 8 Order - Имя или название компании
+async function askOrderStep8(chatId, userId) {
   const userData = userStates[userId].data;
   let formText = '📋 <b>Твоя заявка:</b>\n\n';
 
-  if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
-  if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
-  if (userData.objectType) formText += `3️⃣ Тип объекта: ${userData.objectType}\n`;
-  if (userData.workType) formText += `4️⃣ Задача: ${userData.workType}\n`;
-  if (userData.executorRequirements) formText += `5️⃣ Требования: ${userData.executorRequirements}\n`;
-  if (userData.validityPeriod) formText += `6️⃣ Срок актуальности: ${userData.validityPeriod}\n`;
+  if (userData.workFormat) formText += `1️⃣ Формат работы: ${userData.workFormat}\n`;
+  if (userData.requestType) formText += `2️⃣ Кого ищешь: ${userData.requestType}\n`;
+  if (userData.cityLocation) formText += `3️⃣ Город: ${userData.cityLocation}\n`;
+  if (userData.objectType) formText += `4️⃣ Тип объекта: ${userData.objectType}\n`;
+  if (userData.workType) formText += `5️⃣ Задача: ${userData.workType}\n`;
+  if (userData.executorRequirements) formText += `6️⃣ Требования: ${userData.executorRequirements}\n`;
+  if (userData.validityPeriod) formText += `7️⃣ Срок актуальности: ${userData.validityPeriod}\n`;
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}👤 Шаг 7 из 9 — Имя или название компании
+  const text = `${formText}👤 Шаг 8 из 10 — Имя или название компании
 
 Напиши имя или название компании —
 это будет видно специалистам.
@@ -4424,22 +4580,23 @@ async function askOrderStep7(chatId, userId) {
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 8 Order - Контактный номер телефона
-async function askOrderStep8(chatId, userId) {
+// Шаг 9 Order - Контактный номер телефона
+async function askOrderStep9(chatId, userId) {
   const userData = userStates[userId].data;
   let formText = '📋 <b>Твоя заявка:</b>\n\n';
 
-  if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
-  if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
-  if (userData.objectType) formText += `3️⃣ Тип объекта: ${userData.objectType}\n`;
-  if (userData.workType) formText += `4️⃣ Задача: ${userData.workType}\n`;
-  if (userData.executorRequirements) formText += `5️⃣ Требования: ${userData.executorRequirements}\n`;
-  if (userData.validityPeriod) formText += `6️⃣ Срок актуальности: ${userData.validityPeriod}\n`;
-  if (userData.companyName) formText += `7️⃣ Компания: ${userData.companyName}\n`;
+  if (userData.workFormat) formText += `1️⃣ Формат работы: ${userData.workFormat}\n`;
+  if (userData.requestType) formText += `2️⃣ Кого ищешь: ${userData.requestType}\n`;
+  if (userData.cityLocation) formText += `3️⃣ Город: ${userData.cityLocation}\n`;
+  if (userData.objectType) formText += `4️⃣ Тип объекта: ${userData.objectType}\n`;
+  if (userData.workType) formText += `5️⃣ Задача: ${userData.workType}\n`;
+  if (userData.executorRequirements) formText += `6️⃣ Требования: ${userData.executorRequirements}\n`;
+  if (userData.validityPeriod) formText += `7️⃣ Срок актуальности: ${userData.validityPeriod}\n`;
+  if (userData.companyName) formText += `8️⃣ Компания: ${userData.companyName}\n`;
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}Шаг 8 из 9 — Контактный номер телефона
+  const text = `${formText}Шаг 9 из 10 — Контактный номер телефона
 
 Напиши контактный телефон
 или нажми кнопку «Поделиться контактом».`;
@@ -4466,23 +4623,24 @@ async function askOrderStep8(chatId, userId) {
   liveMessages[userId].formStepMessageId = msg.message_id;
 }
 
-// Шаг 9 Order - Финальное согласование (проверка данных)
-async function askOrderStep9(chatId, userId) {
+// Шаг 10 Order - Финальное согласование (проверка данных)
+async function askOrderStep10(chatId, userId) {
   const userData = userStates[userId].data;
   let formText = '📋 <b>Твоя заявка:</b>\n\n';
 
-  if (userData.requestType) formText += `1️⃣ Кого ищешь: ${userData.requestType}\n`;
-  if (userData.cityLocation) formText += `2️⃣ Город: ${userData.cityLocation}\n`;
-  if (userData.objectType) formText += `3️⃣ Тип объекта: ${userData.objectType}\n`;
-  if (userData.workType) formText += `4️⃣ Задача: ${userData.workType}\n`;
-  if (userData.executorRequirements) formText += `5️⃣ Требования: ${userData.executorRequirements}\n`;
-  if (userData.validityPeriod) formText += `6️⃣ Срок актуальности: ${userData.validityPeriod}\n`;
-  if (userData.companyName) formText += `7️⃣ Компания: ${userData.companyName}\n`;
-  if (userData.contact) formText += `8️⃣ Контакт: ${userData.contact}\n`;
+  if (userData.workFormat) formText += `1️⃣ Формат работы: ${userData.workFormat}\n`;
+  if (userData.requestType) formText += `2️⃣ Кого ищешь: ${userData.requestType}\n`;
+  if (userData.cityLocation) formText += `3️⃣ Город: ${userData.cityLocation}\n`;
+  if (userData.objectType) formText += `4️⃣ Тип объекта: ${userData.objectType}\n`;
+  if (userData.workType) formText += `5️⃣ Задача: ${userData.workType}\n`;
+  if (userData.executorRequirements) formText += `6️⃣ Требования: ${userData.executorRequirements}\n`;
+  if (userData.validityPeriod) formText += `7️⃣ Срок актуальности: ${userData.validityPeriod}\n`;
+  if (userData.companyName) formText += `8️⃣ Компания: ${userData.companyName}\n`;
+  if (userData.contact) formText += `9️⃣ Контакт: ${userData.contact}\n`;
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}Шаг 9 из 9 — Проверка заявки
+  const text = `${formText}Шаг 10 из 10 — Проверка заявки
 
 <b>Проверь заявку перед публикацией:</b>
 
@@ -4691,7 +4849,7 @@ bot.on('message', async (msg) => {
 Я подберу специалистов из Базы по твоему запросу.
 
 Пример:
-«Нужен плиточник в Москве для квартиры»`;
+«Нужен плиточник для квартиры»`;
 
       const searchPromptMsg = await bot.sendMessage(chatId, searchText, {
         reply_markup: {
@@ -4730,8 +4888,8 @@ bot.on('message', async (msg) => {
       // Показать сообщение "Анализирую запрос..."
       const analyzingMsg = await bot.sendMessage(chatId, '🤖 Анализирую запрос и подбираю специалистов...');
 
-      // Определить категорию через AI
-      const category = await determineCategoryWithAI(userQuery, 'any');
+      // Определить категорию через AI с учетом формата работы
+      const category = await determineCategoryWithAI(userQuery, searchStates[userId].workFormat);
 
       // Удаляем сообщение "Анализирую..."
       await safeDeleteMessage(chatId, analyzingMsg.message_id);
@@ -4824,12 +4982,14 @@ bot.on('message', async (msg) => {
         // Специалистов нет
         const noResultsText = `По твоему запросу сейчас нет подходящих специалистов.
 
-Создай заявку —
-и специалисты сами свяжутся с тобой.`;
+• Попробуй ввести другой запрос.
+
+• Или создай заявку и специалисты сами свяжутся с тобой.`;
 
         await bot.sendMessage(chatId, noResultsText, {
           reply_markup: {
             inline_keyboard: [
+              [{ text: '🔍 Ввести другой запрос', callback_data: 'search_specialist' }],
               [{ text: '🧾 Создать заявку', callback_data: 'create_order' }],
               [{ text: '🏠 В меню', callback_data: 'main_menu' }]
             ]
@@ -4953,8 +5113,8 @@ bot.on('message', async (msg) => {
       // Показать сообщение "Анализирую запрос..."
       const analyzingMsg = await bot.sendMessage(chatId, '🤖 Анализирую запрос и подбираю заявки...');
 
-      // Определить категорию через AI
-      const category = await determineCategoryWithAI(userQuery, 'any');
+      // Определить категорию через AI с учетом формата работы
+      const category = await determineCategoryWithAI(userQuery, searchStates[userId].workFormat);
 
       // Удаляем сообщение "Анализирую..."
       await safeDeleteMessage(chatId, analyzingMsg.message_id);
@@ -5096,10 +5256,10 @@ bot.on('message', async (msg) => {
 
     let responseText = text;
 
-    // Обработка контакта (contractor шаг 10, order шаг 8)
+    // Обработка контакта (contractor шаг 10, order шаг 9)
     if (msg.contact && (
       (state.formType === 'contractor' && state.step === 10) ||
-      (state.formType === 'order' && state.step === 8)
+      (state.formType === 'order' && state.step === 9)
     )) {
       const contact = msg.contact;
       // Убираем лишний плюс если он уже есть в номере
@@ -5164,7 +5324,7 @@ bot.on('message', async (msg) => {
 
       let validation;
       switch (state.step) {
-        case 1: // Кого ищешь (свободный текстовый ввод)
+        case 2: // Кого ищешь (свободный текстовый ввод)
           validation = validateWorkType(responseText);
           if (!validation.valid) {
             const errMsg = await bot.sendMessage(chatId, validation.message);
@@ -5172,9 +5332,9 @@ bot.on('message', async (msg) => {
             return;
           }
 
-          // Этап 5: Определение категории через AI (для заявок используем все категории)
+          // Этап 5: Определение категории через AI с учетом формата работы
           const orderCategoryMsg = await bot.sendMessage(chatId, '🤖 Определяю категорию...');
-          const orderCategory = await determineCategoryWithAI(responseText.trim(), 'any');
+          const orderCategory = await determineCategoryWithAI(responseText.trim(), state.data.workFormat);
 
           setTimeout(() => {
             safeDeleteMessage(chatId, orderCategoryMsg.message_id).catch(() => {});
@@ -5193,18 +5353,18 @@ bot.on('message', async (msg) => {
 ❌ Не подходит:
 "Мастера"
 "Работники"`);
-            // НЕ переходим на следующий шаг, остаемся на шаге 1
+            // НЕ переходим на следующий шаг, остаемся на шаге 2
             return;
           }
 
           state.data.requestType = responseText.trim();
           state.data.category = orderCategory; // Сохраняем категорию
           state.data.workArea = getWorkAreaByCategory(orderCategory); // Сохраняем область работ
-          state.step = 2;
-          await askOrderStep2(chatId, userId);
+          state.step = 3;
+          await askOrderStep3(chatId, userId);
           break;
 
-        case 2: // Город и локация
+        case 3: // Город и локация
           validation = validateCityLocation(responseText);
           if (!validation.valid) {
             const errMsg = await bot.sendMessage(chatId, validation.message);
@@ -5250,11 +5410,11 @@ bot.on('message', async (msg) => {
           }
 
           state.data.cityLocation = processedOrderCity;
-          state.step = 3;
-          await askOrderStep3(chatId, userId);
+          state.step = 4;
+          await askOrderStep4(chatId, userId);
           break;
 
-        case 3: // Тип объекта (свободный ввод)
+        case 4: // Тип объекта (свободный ввод)
           validation = validateCityLocation(responseText); // Используем ту же валидацию
           if (!validation.valid) {
             const errMsg = await bot.sendMessage(chatId, validation.message);
@@ -5262,11 +5422,11 @@ bot.on('message', async (msg) => {
             return;
           }
           state.data.objectType = responseText.trim();
-          state.step = 4;
-          await askOrderStep4(chatId, userId);
+          state.step = 5;
+          await askOrderStep5(chatId, userId);
           break;
 
-        case 4: // Описание задачи (объединение старых шагов 4 и 5)
+        case 5: // Описание задачи (объединение старых шагов 4 и 5)
           validation = validateWorkType(responseText);
           if (!validation.valid) {
             const errMsg = await bot.sendMessage(chatId, validation.message);
@@ -5274,11 +5434,11 @@ bot.on('message', async (msg) => {
             return;
           }
           state.data.workType = responseText.trim();
-          state.step = 5;
-          await askOrderStep5(chatId, userId);
+          state.step = 6;
+          await askOrderStep6(chatId, userId);
           break;
 
-        case 5: // Требования к исполнителю (необязательно)
+        case 6: // Требования к исполнителю (необязательно)
           validation = validateExecutorRequirements(responseText);
           if (!validation.valid) {
             const errMsg = await bot.sendMessage(chatId, validation.message);
@@ -5286,11 +5446,11 @@ bot.on('message', async (msg) => {
             return;
           }
           state.data.executorRequirements = responseText.trim();
-          state.step = 6;
-          await askOrderStep6(chatId, userId);
+          state.step = 7;
+          await askOrderStep7(chatId, userId);
           break;
 
-        case 6: // Срок актуальности (свободный ввод или кнопки)
+        case 7: // Срок актуальности (свободный ввод или кнопки)
           validation = validateCityLocation(responseText); // Базовая валидация
           if (!validation.valid) {
             const errMsg = await bot.sendMessage(chatId, validation.message);
@@ -5298,11 +5458,11 @@ bot.on('message', async (msg) => {
             return;
           }
           state.data.validityPeriod = responseText.trim();
-          state.step = 7;
-          await askOrderStep7(chatId, userId);
+          state.step = 8;
+          await askOrderStep8(chatId, userId);
           break;
 
-        case 7: // Имя или название компании
+        case 8: // Имя или название компании
           validation = validateCompanyName(responseText);
           if (!validation.valid) {
             const errMsg = await bot.sendMessage(chatId, validation.message);
@@ -5310,11 +5470,11 @@ bot.on('message', async (msg) => {
             return;
           }
           state.data.companyName = responseText.trim();
-          state.step = 8;
-          await askOrderStep8(chatId, userId);
+          state.step = 9;
+          await askOrderStep9(chatId, userId);
           break;
 
-        case 8: // Контактный телефон
+        case 9: // Контактный телефон
           validation = validatePhoneNumber(responseText);
           if (!validation.valid) {
             const errMsg = await bot.sendMessage(chatId, validation.message);
@@ -5328,8 +5488,8 @@ bot.on('message', async (msg) => {
           state.data.telegramTag = telegramUsername ? `@${telegramUsername}` : null;
 
           // Переходим на финальное согласование
-          state.step = 9;
-          await askOrderStep9(chatId, userId);
+          state.step = 10;
+          await askOrderStep10(chatId, userId);
           break;
 
         default:
