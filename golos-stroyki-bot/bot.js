@@ -1056,7 +1056,7 @@ async function checkUserRole(userId) {
 }
 
 // Сохранение роли пользователя (этап 2) - новая функция
-async function saveUserRole(userId, role) {
+async function saveUserRole(userId, role, username) {
   try {
     // Проверка наличия URL и ключа
     if (!SUPABASE_URL || SUPABASE_URL === 'your_supabase_url_here') {
@@ -1082,6 +1082,7 @@ async function saveUserRole(userId, role) {
         .from('user_roles')
         .update({
           role: role,
+          username: username || null,
           updated_at: new Date().toISOString()
         })
         .eq('telegram_id', userId)
@@ -1102,6 +1103,7 @@ async function saveUserRole(userId, role) {
           {
             telegram_id: userId,
             role: role,
+            username: username || null,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
           }
@@ -1780,8 +1782,11 @@ bot.on('callback_query', async (query) => {
 
     console.log(`✅ Пользователь ${userId} выбрал роль: ${selectedRole}`);
 
+    // Получаем username пользователя
+    const username = query.from.username || null;
+
     // НОВОЕ: Сохраняем роль в БД сразу же (этап 2)
-    const roleResult = await saveUserRole(userId, selectedRole);
+    const roleResult = await saveUserRole(userId, selectedRole, username);
 
     // Удаляем сообщение с выбором роли
     await safeDeleteMessage(chatId, query.message.message_id);
