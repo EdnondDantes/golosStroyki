@@ -4065,7 +4065,7 @@ async function askStep11(chatId, userId) {
 
 <i>Можно пропустить.</i>
 
-Нажимая кнопку «Завершить», вы принимаете <a href="${process.env.PRIVACY_POLICY_URL}">политику конфиденциальности</a>.`;
+Нажимая кнопку «Завершить», вы принимаете <a href="${process.env.PRIVACY_POLICY_URL}">политику конфиденциальности и соглашаетесь на обработку персональных данных.</a>`;
 
   // Удаляем предыдущее сообщение шага если оно есть
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
@@ -4650,7 +4650,7 @@ ${formText}
 Заявка будет опубликована в сообществе «Голос Стройки».
 <i>Специалисты смогут связаться с тобой через Базу.</i>
 
-Нажимая кнопку «Подтвердить», вы принимаете <a href="${process.env.PRIVACY_POLICY_URL}">политику конфиденциальности</a>.`;
+Нажимая кнопку «Подтвердить», вы принимаете <a href="${process.env.PRIVACY_POLICY_URL}">политику конфиденциальности и соглашаетесь на обработку персональных данных.</a>`;
 
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
     try {
