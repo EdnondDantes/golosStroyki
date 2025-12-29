@@ -4063,7 +4063,9 @@ async function askStep11(chatId, userId) {
 Это поможет заказчикам быстрее понять твой уровень
 и ускорит поиск работы.
 
-<i>Можно пропустить.</i>`;
+<i>Можно пропустить.</i>
+
+Нажимая кнопку «Завершить», вы принимаете <a href="${process.env.PRIVACY_POLICY_URL}">политику конфиденциальности</a>.`;
 
   // Удаляем предыдущее сообщение шага если оно есть
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
@@ -4640,13 +4642,15 @@ async function askOrderStep10(chatId, userId) {
 
   formText += '\n━━━━━━━━━━━━━━━\n\n';
 
-  const text = `${formText}Шаг 10 из 10 — Проверка заявки
+  const text = `Шаг 10 из 10 — Проверка заявки
 
 <b>Проверь заявку перед публикацией:</b>
 
 ${formText}
 Заявка будет опубликована в сообществе «Голос Стройки».
-<i>Специалисты смогут связаться с тобой через Базу.</i>`;
+<i>Специалисты смогут связаться с тобой через Базу.</i>
+
+Нажимая кнопку «Подтвердить», вы принимаете <a href="${process.env.PRIVACY_POLICY_URL}">политику конфиденциальности</a>.`;
 
   if (liveMessages[userId] && liveMessages[userId].formStepMessageId) {
     try {
