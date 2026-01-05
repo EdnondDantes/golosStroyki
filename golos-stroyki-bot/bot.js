@@ -2638,6 +2638,58 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
+  // Ввести другой запрос (после неудачного поиска) - запускаем форму создания заявки
+  if (data === 'search_specialist') {
+    await bot.answerCallbackQuery(query.id);
+    await safeDeleteMessage(chatId, query.message.message_id);
+
+    // Очищаем состояние быстрого поиска если оно есть
+    if (searchStates[userId]) {
+      delete searchStates[userId];
+    }
+
+    // Проверяем количество существующих заявок пользователя
+    const { data: existingOrders, error: checkError } = await supabase
+      .from('orders')
+      .select('id')
+      .eq('telegram_id', userId);
+
+    if (checkError) {
+      console.error('Ошибка проверки количества заявок:', checkError);
+    }
+
+    // Если уже есть 2 или больше заявок - показываем ошибку
+    if (existingOrders && existingOrders.length >= 2) {
+      await bot.sendMessage(chatId, `❌ У тебя уже есть максимальное количество заявок (2).
+
+Чтобы создать новую, нужно сначала удалить одну из существующих.`, {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📌 Моя анкета', callback_data: 'my_profile' }],
+            [{ text: '🏠 В меню', callback_data: 'main_menu' }]
+          ]
+        }
+      });
+      return;
+    }
+
+    const confirmText = `Ты можешь создать до <b>2 активных заявок</b> на поиск специалистов.
+
+Заявка будет опубликована в сообществе «Голос Стройки».
+<i>Контакты будут доступны специалистам только через Базу.</i>`;
+
+    await bot.sendMessage(chatId, confirmText, {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '✅ Да, начать', callback_data: 'start_order_form' }],
+          [{ text: '❌ Отмена', callback_data: 'cancel_form' }]
+        ]
+      }
+    });
+    return;
+  }
+
   // Создать заявку
   if (data === 'create_order') {
     await bot.answerCallbackQuery(query.id);
