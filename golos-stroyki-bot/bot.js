@@ -2638,55 +2638,48 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // Ввести другой запрос (после неудачного поиска) - запускаем форму создания заявки
+  // Ввести другой запрос (после неудачного поиска) - запускаем новый поиск специалистов
   if (data === 'search_specialist') {
     await bot.answerCallbackQuery(query.id);
     await safeDeleteMessage(chatId, query.message.message_id);
 
-    // Очищаем состояние быстрого поиска если оно есть
+    // Очищаем состояние поиска если оно есть
     if (searchStates[userId]) {
       delete searchStates[userId];
     }
 
-    // Проверяем количество существующих заявок пользователя
-    const { data: existingOrders, error: checkError } = await supabase
-      .from('orders')
-      .select('id')
-      .eq('telegram_id', userId);
-
-    if (checkError) {
-      console.error('Ошибка проверки количества заявок:', checkError);
+    // Очищаем состояние создания анкеты если оно есть
+    if (userStates[userId]) {
+      delete userStates[userId];
     }
 
-    // Если уже есть 2 или больше заявок - показываем ошибку
-    if (existingOrders && existingOrders.length >= 2) {
-      await bot.sendMessage(chatId, `❌ У тебя уже есть максимальное количество заявок (2).
+    // Показываем выбор города (Шаг 1 быстрого поиска)
+    const cityText = `📍 Шаг 1 из 3 — Город
 
-Чтобы создать новую, нужно сначала удалить одну из существующих.`, {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📌 Моя анкета', callback_data: 'my_profile' }],
-            [{ text: '🏠 В меню', callback_data: 'main_menu' }]
-          ]
-        }
-      });
-      return;
-    }
+В каком городе ищешь специалистов?
 
-    const confirmText = `Ты можешь создать до <b>2 активных заявок</b> на поиск специалистов.
+<i>Выбери из кнопок или напиши свой город</i>`;
 
-Заявка будет опубликована в сообществе «Голос Стройки».
-<i>Контакты будут доступны специалистам только через Базу.</i>`;
-
-    await bot.sendMessage(chatId, confirmText, {
+    const cityPromptMsg = await bot.sendMessage(chatId, cityText, {
       parse_mode: 'HTML',
       reply_markup: {
         inline_keyboard: [
-          [{ text: '✅ Да, начать', callback_data: 'start_order_form' }],
-          [{ text: '❌ Отмена', callback_data: 'cancel_form' }]
+          [{ text: 'Москва', callback_data: 'quick_search_contractors_city_Москва' }],
+          [{ text: 'Санкт-Петербург', callback_data: 'quick_search_contractors_city_Санкт-Петербург' }],
+          [{ text: 'Любой город', callback_data: 'quick_search_contractors_city_Любой город' }],
+          [{ text: '◀️ Назад', callback_data: 'search_people' }],
+          [{ text: '🏠 В меню', callback_data: 'main_menu' }]
         ]
       }
     });
+
+    // Создаем состояние поиска для обработки текстового ввода города
+    searchStates[userId] = {
+      type: 'search_contractors',
+      step: 'waiting_city',
+      messageId: cityPromptMsg.message_id
+    };
+
     return;
   }
 
