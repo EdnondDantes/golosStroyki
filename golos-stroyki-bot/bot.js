@@ -285,8 +285,19 @@ function validatePhoneNumber(text) {
     return { valid: false, message: '❌ Укажите номер телефона.' };
   }
 
-  // Убираем все символы кроме цифр и +
-  const cleanNumber = text.replace(/[\s\-\(\)]/g, '');
+  // Удаляем разрешенные символы форматирования: пробелы, дефисы, скобки
+  let cleanNumber = text.replace(/[\s\-\(\)]/g, '');
+
+  // Проверка на наличие других символов (кроме цифр и +)
+  const invalidCharsPattern = /[^\d\+]/;
+  if (invalidCharsPattern.test(cleanNumber)) {
+    return { valid: false, message: '❌ Некорректный формат номера телефона. Пример: +79123456789 или 89123456789' };
+  }
+
+  // Если номер начинается с 8, заменяем на +7
+  if (cleanNumber.startsWith('8')) {
+    cleanNumber = '+7' + cleanNumber.substring(1);
+  }
 
   // Проверка на корректный формат номера телефона
   const phonePattern = /^\+?[\d]{7,15}$/;
@@ -295,7 +306,7 @@ function validatePhoneNumber(text) {
     return { valid: false, message: '❌ Некорректный формат номера телефона. Пример: +79123456789 или 89123456789' };
   }
 
-  return { valid: true };
+  return { valid: true, cleanNumber: cleanNumber };
 }
 
 function validateTeamSize(text) {
@@ -5535,7 +5546,7 @@ bot.on('message', async (msg) => {
             deleteMessageAfterDelay(chatId, errMsg.message_id);
             return;
           }
-          state.data.contact = responseText.trim();
+          state.data.contact = validation.cleanNumber;
 
           // Автоматически сохраняем telegram username
           const telegramUsername = msg.from.username;
@@ -5771,7 +5782,7 @@ bot.on('message', async (msg) => {
           return;
         }
         try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
-        state.data.contact = responseText.trim();
+        state.data.contact = validation.cleanNumber;
         state.step = 11;
         await askStep11(chatId, userId);
         break;
