@@ -336,6 +336,30 @@ function validateObjectsWorked(text) {
   if (text.length > 500) {
     return { valid: false, message: '❌ Описание слишком длинное. Максимум 500 символов.' };
   }
+
+  // Проверка на наличие ссылок и сайтов
+  const urlPatterns = [
+    /https?:\/\//i,                              // http:// или https://
+    /www\./i,                                     // www.
+    /\.(ru|com|net|org|info|biz|рф|su|by|kz|ua)\b/i, // популярные домены
+    /@[a-zA-Z0-9_]+\.[a-zA-Z]{2,}/i              // email-подобные паттерны
+  ];
+
+  for (const pattern of urlPatterns) {
+    if (pattern.test(text)) {
+      return { valid: false, message: '❌ Нельзя указывать ссылки или сайты в описании задач и объектов.' };
+    }
+  }
+
+  // Проверка на наличие номеров телефонов
+  // Убираем все символы кроме цифр и проверяем на последовательность из 8+ цифр
+  const digitsOnly = text.replace(/[^\d]/g, '');
+  const phonePattern = /\d{8,}/; // 8 и более цифр подряд
+
+  if (phonePattern.test(digitsOnly)) {
+    return { valid: false, message: '❌ Нельзя указывать номера телефонов в описании задач и объектов.' };
+  }
+
   return { valid: true };
 }
 
@@ -4901,24 +4925,19 @@ bot.on('message', async (msg) => {
 
       // Сохраняем город и переходим к шагу 2
       state.city = processedContractorCity;
-      state.step = 'waiting_query';
+      state.step = 'waiting_format';
 
-      // Показываем форму описания специалистов (Шаг 2)
-      const searchText = `🔍 Шаг 2 из 2 — Описание специалистов
+      // Показываем форму выбора формата работы (Шаг 2)
+      const formatText = `Шаг 2 из 3 — Формат работы
 
-Опиши, каких специалистов ты ищешь.
+Кого вы ищете?`;
 
-Можно:
-— написать текстом
-
-Я подберу специалистов из Базы по твоему запросу.
-
-Пример:
-«Нужен плиточник для квартиры»`;
-
-      const searchPromptMsg = await bot.sendMessage(chatId, searchText, {
+      const searchPromptMsg = await bot.sendMessage(chatId, formatText, {
         reply_markup: {
           inline_keyboard: [
+            [{ text: 'Специалиста', callback_data: 'quick_contractors_format_specialist' }],
+            [{ text: 'Бригаду', callback_data: 'quick_contractors_format_team' }],
+            [{ text: 'Компанию/подрядчика', callback_data: 'quick_contractors_format_company' }],
             [{ text: '◀️ Назад', callback_data: 'quick_search_contractors' }],
             [{ text: '🏠 В меню', callback_data: 'main_menu' }]
           ]
@@ -5126,24 +5145,19 @@ bot.on('message', async (msg) => {
 
       // Сохраняем город и переходим к шагу 2
       state.city = processedSearchCity;
-      state.step = 'waiting_query';
+      state.step = 'waiting_work_format';
 
-      // Показываем форму описания работы (Шаг 2)
-      const searchText = `🔍 Шаг 2 из 2 — Описание работы
+      // Показываем форму выбора формата работы (Шаг 2)
+      const formatText = `Шаг 2 из 3 — Формат работы
 
-Опиши, какую работу ты ищешь.
+Вы работаете как:`;
 
-Можно:
-— написать текстом
-
-Я подберу подходящие заявки из Базы по твоему запросу.
-
-Пример:
-«Ищу работу по укладке плитки»`;
-
-      const searchPromptMsg = await bot.sendMessage(chatId, searchText, {
+      const searchPromptMsg = await bot.sendMessage(chatId, formatText, {
         reply_markup: {
           inline_keyboard: [
+            [{ text: 'Специалист', callback_data: 'quick_work_format_specialist' }],
+            [{ text: 'Бригада', callback_data: 'quick_work_format_team' }],
+            [{ text: 'Компания/подрядчик', callback_data: 'quick_work_format_company' }],
             [{ text: '◀️ Назад', callback_data: 'quick_search_work' }],
             [{ text: '🏠 В меню', callback_data: 'main_menu' }]
           ]
