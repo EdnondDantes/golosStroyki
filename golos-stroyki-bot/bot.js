@@ -351,6 +351,12 @@ function validateObjectsWorked(text) {
     }
   }
 
+  // Проверка на наличие Telegram-каналов и username'ов
+  const telegramPattern = /@[a-zA-Z0-9_]{5,}/; // @username (минимум 5 символов)
+  if (telegramPattern.test(text)) {
+    return { valid: false, message: '❌ Нельзя указывать Telegram-каналы и username в описании задач и объектов.' };
+  }
+
   // Проверка на наличие номеров телефонов
   // Убираем все символы кроме цифр и проверяем на последовательность из 8+ цифр
   const digitsOnly = text.replace(/[^\d]/g, '');
@@ -3984,7 +3990,6 @@ async function askStep7(chatId, userId) {
 — собственная команда или оборудование
 
 <i>Можно написать текстом
-// или отправить голосовое сообщение —
 я приведу его в аккуратный и понятный вид.</i>
 
 <i>Пример:</i>
