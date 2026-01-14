@@ -175,8 +175,8 @@ function validateName(text) {
   if (!text || text.trim().length < 2) {
     return { valid: false, message: '❌ Имя слишком короткое. Минимум 2 символа.' };
   }
-  if (text.length > 100) {
-    return { valid: false, message: '❌ Имя слишком длинное. Максимум 100 символов.' };
+  if (text.length > 45) {
+    return { valid: false, message: '❌ Имя слишком длинное. Максимум 45 символов.' };
   }
   return { valid: true };
 }
@@ -188,6 +188,13 @@ function validateCity(text) {
   if (text.length > 50) {
     return { valid: false, message: '❌ Название города слишком длинное. Максимум 50 символов.' };
   }
+
+  // Проверка на запрещенную контактную информацию
+  const contactCheck = checkForContactInfo(text);
+  if (!contactCheck.valid) {
+    return contactCheck;
+  }
+
   return { valid: true };
 }
 
@@ -198,6 +205,13 @@ function validateSpecialization(text) {
   if (text.length > 300) {
     return { valid: false, message: '❌ Специализация слишком длинная. Максимум 300 символов.' };
   }
+
+  // Проверка на запрещенную контактную информацию
+  const contactCheck = checkForContactInfo(text);
+  if (!contactCheck.valid) {
+    return contactCheck;
+  }
+
   return { valid: true };
 }
 
@@ -218,6 +232,13 @@ function validateDescription(text) {
   if (text.length > 500) {
     return { valid: false, message: '❌ Описание слишком длинное. Максимум 500 символов.' };
   }
+
+  // Проверка на запрещенную контактную информацию
+  const contactCheck = checkForContactInfo(text);
+  if (!contactCheck.valid) {
+    return contactCheck;
+  }
+
   return { valid: true };
 }
 
@@ -319,13 +340,37 @@ function validateTeamSize(text) {
   return { valid: true };
 }
 
-function validateWorkFormat(text) {
-  if (!text || text.trim().length < 2) {
-    return { valid: false, message: '❌ Укажите формат работы.' };
+// Универсальная проверка на запрещенную контактную информацию
+function checkForContactInfo(text) {
+  // Проверка на наличие ссылок и сайтов
+  const urlPatterns = [
+    /https?:\/\//i,                              // http:// или https://
+    /www\./i,                                     // www.
+    /\.(ru|com|net|org|info|biz|рф|su|by|kz|ua)\b/i, // популярные домены
+    /@[a-zA-Z0-9_]+\.[a-zA-Z]{2,}/i              // email-подобные паттерны
+  ];
+
+  for (const pattern of urlPatterns) {
+    if (pattern.test(text)) {
+      return { valid: false, message: '❌ Нельзя указывать ссылки или сайты.' };
+    }
   }
-  if (text.length > 100) {
-    return { valid: false, message: '❌ Слишком длинный текст. Максимум 100 символов.' };
+
+  // Проверка на наличие Telegram-каналов и username'ов
+  const telegramPattern = /@[a-zA-Z0-9_]{5,}/; // @username (минимум 5 символов)
+  if (telegramPattern.test(text)) {
+    return { valid: false, message: '❌ Нельзя указывать Telegram-каналы и username.' };
   }
+
+  // Проверка на наличие номеров телефонов
+  // Убираем все символы кроме цифр и проверяем на последовательность из 8+ цифр
+  const digitsOnly = text.replace(/[^\d]/g, '');
+  const phonePattern = /\d{8,}/; // 8 и более цифр подряд
+
+  if (phonePattern.test(digitsOnly)) {
+    return { valid: false, message: '❌ Нельзя указывать номера телефонов.' };
+  }
+
   return { valid: true };
 }
 
@@ -337,33 +382,10 @@ function validateObjectsWorked(text) {
     return { valid: false, message: '❌ Описание слишком длинное. Максимум 500 символов.' };
   }
 
-  // Проверка на наличие ссылок и сайтов
-  const urlPatterns = [
-    /https?:\/\//i,                              // http:// или https://
-    /www\./i,                                     // www.
-    /\.(ru|com|net|org|info|biz|рф|su|by|kz|ua)\b/i, // популярные домены
-    /@[a-zA-Z0-9_]+\.[a-zA-Z]{2,}/i              // email-подобные паттерны
-  ];
-
-  for (const pattern of urlPatterns) {
-    if (pattern.test(text)) {
-      return { valid: false, message: '❌ Нельзя указывать ссылки или сайты в описании задач и объектов.' };
-    }
-  }
-
-  // Проверка на наличие Telegram-каналов и username'ов
-  const telegramPattern = /@[a-zA-Z0-9_]{5,}/; // @username (минимум 5 символов)
-  if (telegramPattern.test(text)) {
-    return { valid: false, message: '❌ Нельзя указывать Telegram-каналы и username в описании задач и объектов.' };
-  }
-
-  // Проверка на наличие номеров телефонов
-  // Убираем все символы кроме цифр и проверяем на последовательность из 8+ цифр
-  const digitsOnly = text.replace(/[^\d]/g, '');
-  const phonePattern = /\d{8,}/; // 8 и более цифр подряд
-
-  if (phonePattern.test(digitsOnly)) {
-    return { valid: false, message: '❌ Нельзя указывать номера телефонов в описании задач и объектов.' };
+  // Проверка на запрещенную контактную информацию
+  const contactCheck = checkForContactInfo(text);
+  if (!contactCheck.valid) {
+    return contactCheck;
   }
 
   return { valid: true };
@@ -386,6 +408,13 @@ function validateDocumentsForm(text) {
   if (text.length > 100) {
     return { valid: false, message: '❌ Слишком длинный текст. Максимум 100 символов.' };
   }
+
+  // Проверка на запрещенную контактную информацию
+  const contactCheck = checkForContactInfo(text);
+  if (!contactCheck.valid) {
+    return contactCheck;
+  }
+
   return { valid: true };
 }
 
@@ -396,6 +425,13 @@ function validatePaymentConditions(text) {
   if (text.length > 200) {
     return { valid: false, message: '❌ Описание слишком длинное. Максимум 200 символов.' };
   }
+
+  // Проверка на запрещенную контактную информацию
+  const contactCheck = checkForContactInfo(text);
+  if (!contactCheck.valid) {
+    return contactCheck;
+  }
+
   return { valid: true };
 }
 
@@ -407,6 +443,13 @@ function validateCityLocation(text) {
   if (text.length > 200) {
     return { valid: false, message: '❌ Слишком длинный текст. Максимум 200 символов.' };
   }
+
+  // Проверка на запрещенную контактную информацию
+  const contactCheck = checkForContactInfo(text);
+  if (!contactCheck.valid) {
+    return contactCheck;
+  }
+
   return { valid: true };
 }
 
@@ -417,6 +460,13 @@ function validateWorkType(text) {
   if (text.length > 300) {
     return { valid: false, message: '❌ Описание слишком длинное. Максимум 300 символов.' };
   }
+
+  // Проверка на запрещенную контактную информацию
+  const contactCheck = checkForContactInfo(text);
+  if (!contactCheck.valid) {
+    return contactCheck;
+  }
+
   return { valid: true };
 }
 
@@ -427,6 +477,13 @@ function validateVolumeTimeline(text) {
   if (text.length > 400) {
     return { valid: false, message: '❌ Описание слишком длинное. Максимум 400 символов.' };
   }
+
+  // Проверка на запрещенную контактную информацию
+  const contactCheck = checkForContactInfo(text);
+  if (!contactCheck.valid) {
+    return contactCheck;
+  }
+
   return { valid: true };
 }
 
@@ -437,6 +494,13 @@ function validateExecutorRequirements(text) {
   if (text.length > 300) {
     return { valid: false, message: '❌ Описание слишком длинное. Максимум 300 символов.' };
   }
+
+  // Проверка на запрещенную контактную информацию
+  const contactCheck = checkForContactInfo(text);
+  if (!contactCheck.valid) {
+    return contactCheck;
+  }
+
   return { valid: true };
 }
 
@@ -445,9 +509,16 @@ function validateCompanyName(text) {
   if (!text || text.trim().length < 2) {
     return { valid: false, message: '❌ Имя или название компании слишком короткое (минимум 2 символа).' };
   }
-  if (text.length > 100) {
-    return { valid: false, message: '❌ Имя или название слишком длинное. Максимум 100 символов.' };
+  if (text.length > 45) {
+    return { valid: false, message: '❌ Имя или название слишком длинное. Максимум 45 символов.' };
   }
+
+  // Проверка на запрещенную контактную информацию
+  const contactCheck = checkForContactInfo(text);
+  if (!contactCheck.valid) {
+    return contactCheck;
+  }
+
   return { valid: true };
 }
 
@@ -5587,18 +5658,11 @@ bot.on('message', async (msg) => {
     let validation;
     switch (state.step) {
       case 1: // Формат работы
-        validation = validateWorkFormat(responseText);
-        if (!validation.valid) {
-          const errMsg = await bot.sendMessage(chatId, validation.message);
-          deleteMessageAfterDelay(chatId, errMsg.message_id);
-          try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
-          return;
-        }
+        // Блокируем текстовый ввод - разрешены только кнопки
+        const errMsg = await bot.sendMessage(chatId, '❌ Пожалуйста, выберите формат работы из предложенных кнопок.');
+        deleteMessageAfterDelay(chatId, errMsg.message_id);
         try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
-        state.data.workFormat = responseText.trim();
-        state.step = 2;
-        await askStep2(chatId, userId);
-        break;
+        return;
 
       case 2: // Специализация (было шаг 3)
         validation = validateSpecialization(responseText);
@@ -5717,8 +5781,9 @@ bot.on('message', async (msg) => {
         break;
 
       case 4: // Имя (НОВОЕ)
-        if (!responseText || responseText.trim().length < 2) {
-          const errMsg = await bot.sendMessage(chatId, '❌ Имя слишком короткое. Введи минимум 2 символа.');
+        validation = validateName(responseText);
+        if (!validation.valid) {
+          const errMsg = await bot.sendMessage(chatId, validation.message);
           deleteMessageAfterDelay(chatId, errMsg.message_id);
           try { await safeDeleteMessage(chatId, msg.message_id); } catch (e) {}
           return;
